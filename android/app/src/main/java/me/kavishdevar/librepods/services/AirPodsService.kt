@@ -55,6 +55,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.ParcelUuid
+import android.os.SystemClock
 import android.os.UserHandle
 import android.provider.Settings
 import android.telecom.TelecomManager
@@ -130,6 +131,7 @@ import me.kavishdevar.librepods.utils.SystemApisUtils.METADATA_UNTETHERED_RIGHT_
 import me.kavishdevar.librepods.utils.SystemApisUtils.METADATA_UNTETHERED_RIGHT_LOW_BATTERY_THRESHOLD
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 import kotlin.time.Duration.Companion.milliseconds
@@ -159,6 +161,18 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
     var airpodsInstance: AirPodsInstance? = null
     var cameraActive = false
     private var disconnectedBecauseReversed = false
+
+    // Content of the last "connected" notification we posted, so identical updates can be skipped.
+    @Volatile
+    private var lastConnectedNotificationKey: String? = null
+    @Volatile
+    private var lastConnectedNotificationTime = 0L
+
+    private val packetLogPersistPending = AtomicBoolean(false)
+
+    private val bleTakeoverInProgress = AtomicBoolean(false)
+    @Volatile
+    private var lastBleTakeoverAttempt = 0L
     private var otherDeviceTookOver = false
 
     data class ServiceConfig(
@@ -239,24 +253,50 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
         init {
             System.loadLibrary("bluetooth_socket")
         }
+
+        private const val PACKET_LOG_PERSIST_DELAY_MS = 10_000L
+        private const val BLE_TAKEOVER_COOLDOWN_MS = 15_000L
+        private const val NOTIFICATION_REFRESH_MS = 60_000L
+    }
+
+    /**
+     * Called when BLE says the AirPods aren't connected to anything. Connects in the
+     * background, one attempt at a time with a cooldown, instead of blocking the main
+     * thread on every scan result.
+     */
+    @SuppressLint("MissingPermission")
+    private fun takeOverFromBle() {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastBleTakeoverAttempt < BLE_TAKEOVER_COOLDOWN_MS) return
+        val mac = sharedPreferences.getString("mac_address", "") ?: ""
+        if (mac.isEmpty()) return
+        if (!bleTakeoverInProgress.compareAndSet(false, true)) return
+        lastBleTakeoverAttempt = now
+        Log.d(TAG, "Seems no device has taken over, we will.")
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val bluetoothAdapter = getSystemService(BluetoothManager::class.java).adapter
+                connectToSocket(bluetoothAdapter, bluetoothAdapter.getRemoteDevice(mac))
+            } catch (e: Exception) {
+                Log.e(TAG, "Takeover from BLE failed: ${e.message}")
+            } finally {
+                bleTakeoverInProgress.set(false)
+            }
+        }
     }
 
     private val bleStatusListener = object : BLEManager.AirPodsStatusListener {
+        override fun onDeviceSeen(device: BLEManager.AirPodsStatus) {
+            // Checked on every advertisement so failed attempts keep retrying; takeOverFromBle() throttles itself.
+            if (device.connectionState == "Disconnected" && BluetoothConnectionManager.aacpSocket?.isConnected != true) { // should never happen unless android messes up and sends us a stale broadcast
+                takeOverFromBle()
+            }
+        }
+
         @SuppressLint("NewApi")
         override fun onDeviceStatusChanged(
             device: BLEManager.AirPodsStatus, previousStatus: BLEManager.AirPodsStatus?
         ) {
-            if (device.connectionState == "Disconnected" && BluetoothConnectionManager.aacpSocket?.isConnected != true) { // should never happen unless android messes up and sends us a stale broadcast
-                Log.d(TAG, "Seems no device has taken over, we will.")
-                val bluetoothManager = getSystemService(BluetoothManager::class.java)
-                val bluetoothAdapter = bluetoothManager.adapter
-                val bluetoothDevice = bluetoothAdapter.getRemoteDevice(
-                    sharedPreferences.getString(
-                        "mac_address", ""
-                    ) ?: ""
-                )
-                connectToSocket(bluetoothAdapter, bluetoothDevice)
-            }
             Log.d(TAG, "Device status changed")
             if (BluetoothConnectionManager.aacpSocket?.isConnected == true) return
             val leftLevel = bleManager.getMostRecentStatus()?.leftBattery ?: 0
@@ -347,6 +387,8 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
 
         override fun onDeviceDisappeared() {
             Log.d(TAG, "All disappeared")
+            // While connected, the notification shows socket data, so BLE going quiet changes nothing.
+            if (BluetoothConnectionManager.aacpSocket?.isConnected == true) return
             updateNotificationContent(
                 false
             )
@@ -971,6 +1013,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                 if (reasonReverseTapped) {
                     Log.d(TAG, "reverse tapped, disconnecting audio")
                     disconnectedBecauseReversed = true
+                    refreshConnectedNotification()
                     disconnectAudio(this@AirPodsService, device)
                     showIsland(
                         this@AirPodsService,
@@ -1238,6 +1281,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
         )
         var justEnabledA2dp = false
         earDetectionNotification.setStatus(earDetection)
+        bleManager.setBothInEar(earDetectionNotification.status.all { it == 0x00.toByte() })
         if (config.earDetectionEnabled) {
             val data = earDetection.copyOfRange(earDetection.size - 2, earDetection.size)
             inEar = data[0] == 0x00.toByte() && data[1] == 0x00.toByte()
@@ -1465,7 +1509,10 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
         if (preferences == null || key == null) return
 
         when (key) {
-            "name" -> config.deviceName = preferences.getString(key, "AirPods") ?: "AirPods"
+            "name" -> {
+                config.deviceName = preferences.getString(key, "AirPods") ?: "AirPods"
+                refreshConnectedNotification()
+            }
             "mac_address" -> macAddress = preferences.getString(key, "") ?: ""
             "automatic_ear_detection" -> config.earDetectionEnabled =
                 preferences.getBoolean(key, true)
@@ -1612,18 +1659,20 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
             _packetLogsFlow.value = inMemoryLogs.toSet()
         }
 
-        CoroutineScope(Dispatchers.IO).launch {
-            val logs =
-                sharedPreferencesLogs.getStringSet(packetLogKey, mutableSetOf())?.toMutableSet()
-                    ?: mutableSetOf()
-            logs.add(logEntry)
+        schedulePacketLogPersist()
+    }
 
-            if (logs.size > maxLogEntries) {
-                val toKeep = logs.toList().takeLast(maxLogEntries).toSet()
-                sharedPreferencesLogs.edit { putStringSet(packetLogKey, toKeep) }
-            } else {
-                sharedPreferencesLogs.edit { putStringSet(packetLogKey, logs) }
-            }
+    /**
+     * Saves the in-memory packet log to disk at most once every few seconds,
+     * instead of rewriting the whole preferences file for every packet.
+     */
+    private fun schedulePacketLogPersist() {
+        if (!packetLogPersistPending.compareAndSet(false, true)) return
+        CoroutineScope(Dispatchers.IO).launch {
+            delay(PACKET_LOG_PERSIST_DELAY_MS)
+            packetLogPersistPending.set(false)
+            val snapshot = synchronized(inMemoryLogs) { inMemoryLogs.toSet() }
+            sharedPreferencesLogs.edit { putStringSet(packetLogKey, snapshot) }
         }
     }
 
@@ -1834,6 +1883,18 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
         })
     }
 
+    /** Re-posts the "connected" notification with the current name, battery and reverse state. */
+    @SuppressLint("MissingPermission")
+    private fun refreshConnectedNotification() {
+        // Only for a live connection; otherwise this could show the "socket failed" notification.
+        if (BluetoothConnectionManager.aacpSocket?.isConnected != true) return
+        updateNotificationContent(
+            true,
+            sharedPreferences.getString("name", device?.name),
+            batteryNotification.getBattery()
+        )
+    }
+
     @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
     fun sendBatteryNotification() {
         updateNotificationContent(
@@ -2040,23 +2101,12 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
     ) {
         val notificationManager = getSystemService(NotificationManager::class.java)
 
-        val notificationIntent = Intent(this, MainActivity::class.java)
-        val pendingIntent = PendingIntent.getActivity(
-            this,
-            0,
-            notificationIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
         if (BluetoothConnectionManager.aacpSocket == null) {
             return
         }
         if (BluetoothConnectionManager.aacpSocket?.isConnected == true) {
-            val updatedNotificationBuilder =
-                NotificationCompat.Builder(this, "airpods_connection_status")
-                    .setSmallIcon(R.drawable.airpods)
-                    .setContentTitle(airpodsName ?: config.deviceName).setContentText(
-                        """${
+            val title = airpodsName ?: config.deviceName
+            val contentText = """${
                         batteryList?.find { it.component == BatteryComponent.LEFT }?.let {
                             if (it.status != BatteryStatus.DISCONNECTED) {
                                 "L: ${if (it.status == BatteryStatus.CHARGING) "⚡" else ""} ${it.level}%"
@@ -2080,7 +2130,29 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                                 ""
                             }
                         } ?: ""
-                    }""").setContentIntent(pendingIntent).setCategory(Notification.CATEGORY_STATUS)
+                    }"""
+
+            // This runs for every packet from the AirPods, so skip it when nothing visible changed.
+            // Still re-post once a minute, so the notification comes back if it was dismissed or lost.
+            val notificationKey = "$title|$contentText|$disconnectedBecauseReversed"
+            val now = SystemClock.elapsedRealtime()
+            if (notificationKey == lastConnectedNotificationKey &&
+                now - lastConnectedNotificationTime < NOTIFICATION_REFRESH_MS
+            ) return
+            lastConnectedNotificationKey = notificationKey
+            lastConnectedNotificationTime = now
+
+            val pendingIntent = PendingIntent.getActivity(
+                this,
+                0,
+                Intent(this, MainActivity::class.java),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val updatedNotificationBuilder =
+                NotificationCompat.Builder(this, "airpods_connection_status")
+                    .setSmallIcon(R.drawable.airpods)
+                    .setContentTitle(title).setContentText(contentText)
+                    .setContentIntent(pendingIntent).setCategory(Notification.CATEGORY_STATUS)
                     .setPriority(NotificationCompat.PRIORITY_LOW).setOngoing(true)
 
             if (disconnectedBecauseReversed) {
@@ -2098,6 +2170,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
             notificationManager.notify(2, updatedNotification)
             notificationManager.cancel(1)
         } else if (!connected) {
+            lastConnectedNotificationKey = null
             notificationManager.cancel(2)
         } else if (!config.bleOnlyMode && BluetoothConnectionManager.aacpSocket?.isConnected != true) {
             showSocketConnectionFailureNotification("BluetoothConnectionManager.aacpSocket? created, but not connected. Check logs")
@@ -2438,6 +2511,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
         if (intent?.action == "me.kavishdevar.librepods.RECONNECT_AFTER_REVERSE") {
             Log.d(TAG, "reconnect after reversed received, taking over")
             disconnectedBecauseReversed = false
+            refreshConnectedNotification()
             otherDeviceTookOver = false
             takeOver("music", manualTakeOverAfterReversed = true)
         }
@@ -2481,6 +2555,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                     if (manualTakeOverAfterReversed) {
                         Log.d(TAG, "forcefully taking over despite reverse as user requested")
                         disconnectedBecauseReversed = false
+                        refreshConnectedNotification()
                     } else {
                         Log.d(
                             TAG,
@@ -2671,6 +2746,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
 
                         BluetoothConnectionManager.aacpSocket = socket
                         BluetoothConnectionManager.attSocket = attSocket
+                        lastConnectedNotificationKey = null
 
                         // Create AirPodsInstance from stored config if available
                         if (airpodsInstance == null && config.airpodsModelNumber.isNotEmpty()) {
@@ -2769,30 +2845,25 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
 
                     setupStemActions()
 
+                    val buffer = ByteArray(1024)
                     while (socket.isConnected) {
                         try {
-                            val buffer = ByteArray(1024)
                             val bytesRead = it.inputStream.read(buffer)
-                            var data: ByteArray
+                            val data: ByteArray
                             if (bytesRead > 0) {
                                 data = buffer.copyOfRange(0, bytesRead)
-                                sendBroadcast(Intent(AirPodsNotifications.AIRPODS_DATA).apply {
-                                    putExtra("data", buffer.copyOfRange(0, bytesRead))
-                                    setPackage(packageName)
-                                })
-                                val bytes = buffer.copyOfRange(0, bytesRead)
-                                val formattedHex = bytes.joinToString(" ") { "%02X".format(it) }
-//                                    CrossDevice.sendReceivedPacket(bytes)
-                                updateNotificationContent(
-                                    true,
-                                    sharedPreferences.getString("name", device.name),
-                                    batteryNotification.getBattery()
-                                )
+                                // No raw AIRPODS_DATA broadcast here: nothing listened to it, and it cost an IPC call per packet.
+//                                    CrossDevice.sendReceivedPacket(data)
+                                // The notification is updated where its content changes (battery, name, reverse).
+                                // This only re-posts it now and then, in case it was dismissed or lost.
+                                if (SystemClock.elapsedRealtime() - lastConnectedNotificationTime >= NOTIFICATION_REFRESH_MS) {
+                                    refreshConnectedNotification()
+                                }
 
                                 aacpManager.receivePacket(data)
 
                                 if (!isHeadTrackingData(data)) {
-                                    Log.d("AirPodsData", "Data received: $formattedHex")
+                                    Log.d("AirPodsData", "Data received: ${data.joinToString(" ") { b -> "%02X".format(b) }}")
                                     logPacket(data, "AirPods")
                                 }
 
