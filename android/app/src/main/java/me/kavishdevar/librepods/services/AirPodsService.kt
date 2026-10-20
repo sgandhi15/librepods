@@ -222,7 +222,8 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
     // during an attempt is remembered and run afterwards if that attempt didn't connect.
     private val connectLock = Any()
     private var connectRunning = false // guarded by connectLock
-    private var pendingConnect: Pair<BluetoothDevice, Boolean>? = null // guarded by connectLock
+    // Queued requests, one per device (by address), in arrival order. Guarded by connectLock.
+    private val pendingConnects = LinkedHashMap<String, Pair<BluetoothDevice, Boolean>>()
     private var disconnectDeferred = false // guarded by connectLock
 
     @Volatile
@@ -882,7 +883,10 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                             override fun onServiceConnected(profile: Int, proxy: BluetoothProfile) {
                                 if (profile == BluetoothProfile.A2DP) {
                                     val connectedDevices = proxy.connectedDevices
-                                    if (connectedDevices.isNotEmpty()) {
+                                    // Only this device if it's actually connected. Checking for any
+                                    // connected device tried (and paged) every saved AirPods pair, and
+                                    // saved whichever came last as our mac_address.
+                                    if (connectedDevices.any { it.address == device.address }) {
 //                                        if (!CrossDevice.isAvailable) {
                                         CoroutineScope(Dispatchers.IO).launch {
                                             connectToSocket(bluetoothAdapter, device)
@@ -2825,7 +2829,10 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
         synchronized(connectLock) {
             if (connectRunning) {
                 Log.d(TAG, "Socket connection already in progress, queued")
-                pendingConnect = device to (manual || pendingConnect?.second == true)
+                // Keep one request per device. A single slot used to drop requests, e.g. on start
+                // when several saved AirPods were tried and the connected pair was overwritten.
+                val queuedManual = pendingConnects[device.address]?.second == true
+                pendingConnects[device.address] = device to (manual || queuedManual)
                 if (manual) sendToast("Already connecting…")
                 return false
             }
@@ -2855,9 +2862,9 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
             // request can't be queued just after we looked and then never run.
             var finishDisconnect = false
             val next = synchronized(connectLock) {
-                val queued = pendingConnect
-                pendingConnect = null
-                if (queued == null || connected) {
+                val queued = if (connected) null else pendingConnects.keys.firstOrNull()?.let { pendingConnects.remove(it) }
+                if (connected) pendingConnects.clear()
+                if (queued == null) {
                     connectRunning = false
                     finishDisconnect = disconnectDeferred && !connected
                     disconnectDeferred = false

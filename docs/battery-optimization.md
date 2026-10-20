@@ -74,6 +74,7 @@ The address caches are size-limited and are cleared when the IRK changes.
 **Other fixes**
 - If the lid opens while the popup can't be seen (screen off, or on the lock screen, which covers overlays), the popup is shown once the phone is on and unlocked, if that happens within a minute. Before, it was shown where nobody could see it, and since only one popup is shown per connection, you didn't get one at all.
 - A manual disconnect now cancels the "connected" notification and closes the ATT socket.
+- On start, the service only connects to the saved AirPods that are actually connected. Before, if any audio device was connected, it tried (and paged) every saved AirPods pair, and saved whichever came last as `mac_address`, which the BLE takeover then used. The connection queue keeps one request per device, so none is dropped.
 - With the vendor-ID hook, the ATT socket is now set before its reader starts. Before, the reader stopped at once on a new connection and the first reads failed.
 
 ## Review findings
