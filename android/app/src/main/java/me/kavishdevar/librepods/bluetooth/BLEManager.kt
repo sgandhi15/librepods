@@ -187,7 +187,11 @@ class BLEManager(private val context: Context) {
     // Without the IRK every advertisement is thrown away, so there's no point scanning until we
     // have one. It's saved after the first connection to the AirPods.
     private val keyListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        if (key == AacpIrkKey) scheduleProfileUpdate()
+        when (key) {
+            AacpIrkKey -> scheduleProfileUpdate()
+            // Cached packets were parsed without (or with another) key; parse them again.
+            AacpEncKey -> lastRawData.clear()
+        }
     }
 
     private val lastValidCaseBatteryMap = mutableMapOf<String, Int>()
@@ -318,6 +322,7 @@ class BLEManager(private val context: Context) {
     fun startScanning() {
         onMain {
             scanningRequested = true
+            consecutiveScanFailures = 0
             isScreenOn = context.getSystemService(PowerManager::class.java)?.isInteractive ?: true
             isAudioLinkConnected = BluetoothConnectionManager.aacpSocket?.isConnected == true
             registerStateReceiver()
@@ -468,6 +473,7 @@ class BLEManager(private val context: Context) {
     @SuppressLint("MissingPermission")
     private fun stopScanInternal() {
         activeProfile = null
+        consecutiveScanFailures = 0
         cleanupHandler.removeCallbacks(cleanupRunnable)
         try {
             if (mBluetoothLeScanner != null && mScanCallback != null) {
@@ -491,11 +497,9 @@ class BLEManager(private val context: Context) {
     @SuppressLint("GetInstance")
     @OptIn(ExperimentalEncodingApi::class)
     private fun getDecryptCipher(): Cipher? {
-        val keyBase64 = sharedPreferences.getString(AACPManager.Companion.ProximityKeyType.ENC_KEY.name, null)
+        val keyBase64 = sharedPreferences.getString(AacpEncKey, null)
         if (keyBase64 != cachedEncKeyBase64) {
             cachedEncKeyBase64 = keyBase64
-            // Cached packets were parsed without (or with another) key; parse them again.
-            lastRawData.clear()
             cachedDecryptCipher = keyBase64?.let {
                 try {
                     Cipher.getInstance("AES/ECB/NoPadding").apply {
@@ -806,6 +810,7 @@ class BLEManager(private val context: Context) {
     companion object {
         private const val TAG = "AirPodsBLE"
         private val AacpIrkKey = AACPManager.Companion.ProximityKeyType.IRK.name
+        private val AacpEncKey = AACPManager.Companion.ProximityKeyType.ENC_KEY.name
         private const val CLEANUP_INTERVAL_MS = 10000L
         private const val PROFILE_CHANGE_DEBOUNCE_MS = 1_000L
         private const val SCREEN_OFF_DEBOUNCE_MS = 15_000L

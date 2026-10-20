@@ -55,17 +55,17 @@ The address caches are size-limited and are cleared when the IRK changes.
 - Packet hex is formatted once per packet instead of twice.
 
 **Connecting**
-- Only one socket connection attempt runs at a time, whichever path starts it. Before, the BLE takeover, the ACL/A2DP receivers and `takeOver()` could connect in parallel and fight over the socket. A request that arrives during an attempt is run afterwards if that attempt didn't connect.
+- Only one socket connection attempt runs at a time, whichever path starts it. Before, the BLE takeover, the ACL/A2DP receivers and `takeOver()` could connect in parallel and fight over the socket. A request that arrives during an attempt is queued and run afterwards on a background thread if that attempt didn't connect, so the main thread is never blocked by a queued attempt.
 - Sockets from failed attempts are closed, both AACP and ATT; they used to leak.
-- When the reader ends, its dead socket is closed, so nothing keeps treating the link as up.
-- The BLE "nobody is connected, take over" path runs in the background instead of blocking the main thread. Failed attempts back off from 15 s up to 5 min. The back-off resets after any successful connection, when the lid opens, when the in-ear state changes, or when the AirPods report a state other than "Disconnected".
+- When the reader ends, its dead socket and the ATT socket of the same connection are closed, so nothing keeps treating the link as up. That disconnect is tagged with its socket, so if a new connection is already up when it's handled, it's ignored instead of tearing the new one down.
+- The BLE "nobody is connected, take over" path runs in the background instead of blocking the main thread. Failed attempts back off from 15 s up to 5 min. The back-off resets after any successful connection, when the lid opens, when the in-ear state changes, or when the AirPods report a state other than "Disconnected". Attempts always stay at least 15 s apart.
 
 **Battery updates**
 - A BLE battery change no longer runs the battery/widget/metadata update twice.
 
 ## Review findings
 
-In October 2026, 12 independent reviews checked this work: Claude Opus 5.5 and Fable 5.1, Codex GPT-6-Astra and GPT-6.1-Sol, and 8 free OpenCode models. Nemotron 3 Ultra failed to run. Claude Opus and GPT-6.1-Sol then ran a verification round on the fixes. Every confirmed issue above is fixed.
+In October 2026, 12 independent reviews checked this work: Claude Opus 5.5 and Fable 5.1, Codex GPT-6-Astra and GPT-6.1-Sol, and 8 free OpenCode models. Nemotron 3 Ultra failed to run. Claude Opus and GPT-6.1-Sol then ran two verification rounds on the fixes. Every confirmed issue above is fixed.
 
 Claims checked and rejected:
 - **"`RECEIVER_NOT_EXPORTED` blocks the Bluetooth and screen broadcasts."** No. They come from system_server, which can deliver to non-exported receivers.

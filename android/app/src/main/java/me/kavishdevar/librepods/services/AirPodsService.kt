@@ -132,7 +132,6 @@ import me.kavishdevar.librepods.utils.SystemApisUtils.METADATA_UNTETHERED_RIGHT_
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 import kotlin.time.Duration.Companion.milliseconds
@@ -173,8 +172,9 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
 
     // Only one socket connection attempt at a time, whoever starts it. A request that arrives
     // during an attempt is remembered and run afterwards if that attempt didn't connect.
-    private val socketConnectInProgress = AtomicBoolean(false)
-    private val pendingConnect = AtomicReference<Pair<BluetoothDevice, Boolean>?>(null)
+    private val connectLock = Any()
+    private var connectRunning = false // guarded by connectLock
+    private var pendingConnect: Pair<BluetoothDevice, Boolean>? = null // guarded by connectLock
 
     @Volatile
     private var lastBleTakeoverAttempt = 0L
@@ -265,6 +265,12 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
         private const val BLE_TAKEOVER_MIN_COOLDOWN_MS = 15_000L
         private const val BLE_TAKEOVER_MAX_COOLDOWN_MS = 5 * 60_000L
         private const val NOTIFICATION_REFRESH_MS = 60_000L
+        private const val EXTRA_SOCKET_ID = "socket_id"
+    }
+
+    /** Undoes the back-off. Attempts still stay at least 15 s apart. */
+    private fun resetBleTakeoverBackoff() {
+        bleTakeoverCooldownMs = BLE_TAKEOVER_MIN_COOLDOWN_MS
     }
 
     /**
@@ -273,16 +279,11 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
      * back off from 15 s up to 5 min, so AirPods that refuse the connection don't get
      * paged forever.
      */
-    private fun resetBleTakeoverBackoff() {
-        bleTakeoverCooldownMs = BLE_TAKEOVER_MIN_COOLDOWN_MS
-        lastBleTakeoverAttempt = 0L
-    }
-
     @SuppressLint("MissingPermission")
     private fun takeOverFromBle() {
         val now = SystemClock.elapsedRealtime()
         if (now - lastBleTakeoverAttempt < bleTakeoverCooldownMs) return
-        if (socketConnectInProgress.get()) return
+        if (synchronized(connectLock) { connectRunning }) return
         val mac = sharedPreferences.getString("mac_address", "") ?: ""
         if (mac.isEmpty()) return
         lastBleTakeoverAttempt = now
@@ -740,6 +741,16 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
 //                    }
 
                 } else if (intent?.action == AirPodsNotifications.AIRPODS_DISCONNECTED) {
+                    // A disconnect from an old socket's reader can arrive after a new connection
+                    // is already up (the old socket is closed right away). Don't tear that down.
+                    val endedSocketId = intent.getIntExtra(EXTRA_SOCKET_ID, 0)
+                    val current = BluetoothConnectionManager.aacpSocket
+                    if (endedSocketId != 0 && current != null && current.isConnected &&
+                        System.identityHashCode(current) != endedSocketId
+                    ) {
+                        Log.d(TAG, "Ignoring disconnect from an old socket")
+                        return
+                    }
                     device = null
 //                    isConnectedLocally = false
                     popupShown = false
@@ -2715,30 +2726,56 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
     ) {
         if (BluetoothConnectionManager.aacpSocket != null && BluetoothConnectionManager.aacpSocket?.isConnected == true) return
         // Several paths (BLE takeover, ACL/A2DP receivers, takeOver(), manual reconnect) can call
-        // this at the same time. Two parallel attempts can both succeed and fight over the socket.
-        if (!socketConnectInProgress.compareAndSet(false, true)) {
-            Log.d(TAG, "Socket connection already in progress, will retry after it if needed")
-            pendingConnect.updateAndGet { device to (manual || it?.second == true) }
-            if (manual) sendToast("Already connecting…")
-            return
+        // this at the same time. Two parallel attempts can both succeed and fight over the socket,
+        // so only one runs; a request that arrives meanwhile is queued and run afterwards if the
+        // running attempt didn't connect.
+        synchronized(connectLock) {
+            if (connectRunning) {
+                Log.d(TAG, "Socket connection already in progress, queued")
+                pendingConnect = device to (manual || pendingConnect?.second == true)
+                if (manual) sendToast("Already connecting…")
+                return
+            }
+            connectRunning = true
         }
-        try {
-            // Another attempt may have connected between the check above and taking the guard.
-            if (BluetoothConnectionManager.aacpSocket?.isConnected != true) {
-                connectToSocketLocked(adapter, device, manual)
+        runConnectLoop(adapter, device to manual)
+    }
+
+    /** Runs [first], then any queued requests. Must only be called while holding connectRunning. */
+    private fun runConnectLoop(adapter: BluetoothAdapter, first: Pair<BluetoothDevice, Boolean>) {
+        var current: Pair<BluetoothDevice, Boolean>? = first
+        while (current != null) {
+            try {
+                // Another attempt may have connected since this request was made.
+                if (BluetoothConnectionManager.aacpSocket?.isConnected != true) {
+                    connectToSocketLocked(adapter, current.first, current.second)
+                }
+            } catch (t: Throwable) {
+                // Catch everything: an escaping error would leave the guard held and block all
+                // future connections.
+                Log.e(TAG, "Socket connection attempt failed: ${t.message}")
             }
-        } finally {
-            if (BluetoothConnectionManager.aacpSocket?.isConnected == true) {
-                bleTakeoverCooldownMs = BLE_TAKEOVER_MIN_COOLDOWN_MS
+            val connected = BluetoothConnectionManager.aacpSocket?.isConnected == true
+            if (connected) bleTakeoverCooldownMs = BLE_TAKEOVER_MIN_COOLDOWN_MS
+            // Taking the next request and releasing the guard happen under one lock, so a
+            // request can't be queued just after we looked and then never run.
+            val next = synchronized(connectLock) {
+                val queued = pendingConnect
+                pendingConnect = null
+                if (queued == null || connected) {
+                    connectRunning = false
+                    null
+                } else {
+                    queued
+                }
             }
-            socketConnectInProgress.set(false)
-        }
-        // Read after releasing the guard: a request that comes in later takes the guard itself,
-        // so none can slip through unhandled.
-        pendingConnect.getAndSet(null)?.let { (pendingDevice, pendingManual) ->
-            if (BluetoothConnectionManager.aacpSocket?.isConnected != true) {
-                connectToSocket(adapter, pendingDevice, pendingManual)
+            if (next != null && Looper.myLooper() == Looper.getMainLooper()) {
+                // Some callers (call takeover, media takeover) run on the main thread. Don't block
+                // it with another attempt; continue on IO, still holding the guard.
+                CoroutineScope(Dispatchers.IO).launch { runConnectLoop(adapter, next) }
+                return
             }
+            current = next
         }
     }
 
@@ -2843,6 +2880,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
             if (!socket.isConnected) {
                 Log.d(TAG, "<LogCollector:Complete:Failed> socket not connected")
                 closeUnusedSocket(socket)
+                closeUnusedSocket(attemptAttSocket)
                 if (manual) {
                     sendToast(
                         "Couldn't connect to socket: timeout."
@@ -2914,6 +2952,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                                 Log.d("AirPodsService", "socket closed (bytesRead = -1)")
                                 closeDeadSocket(socket)
                                 sendBroadcast(Intent(AirPodsNotifications.AIRPODS_DISCONNECTED).apply {
+                                    putExtra(EXTRA_SOCKET_ID, System.identityHashCode(socket))
                                     setPackage(packageName)
                                 })
                                 aacpManager.disconnected()
@@ -2924,6 +2963,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                             e.printStackTrace()
                             closeDeadSocket(socket)
                             sendBroadcast(Intent(AirPodsNotifications.AIRPODS_DISCONNECTED).apply {
+                                putExtra(EXTRA_SOCKET_ID, System.identityHashCode(socket))
                                 setPackage(packageName)
                             })
                             aacpManager.disconnected()
@@ -2975,6 +3015,10 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
             socket.close()
         } catch (e: Exception) {
             Log.w(TAG, "Couldn't close dead socket: ${e.message}")
+        }
+        // The ATT socket belongs to the same connection; close it and stop its reader too.
+        if (BluetoothConnectionManager.aacpSocket === socket) {
+            attManager.disconnected()
         }
     }
 
