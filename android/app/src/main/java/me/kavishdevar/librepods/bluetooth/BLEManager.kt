@@ -134,6 +134,7 @@ class BLEManager(private val context: Context) {
     // Set when the AACP link drops: the next BLE status is reported even if unchanged, so
     // battery shown from the socket is replaced with fresh BLE data.
     private var reportNextStatus = false
+    private var consecutiveScanFailures = 0
     private val scanStartTimes = ArrayDeque<Long>()
     private val currentProfile: ScanProfile get() = activeProfile ?: ScanProfile.FAST
 
@@ -157,7 +158,11 @@ class BLEManager(private val context: Context) {
                     scheduleProfileUpdate(SCREEN_OFF_DEBOUNCE_MS)
                     return
                 }
-                AirPodsNotifications.AIRPODS_CONNECTED -> isAudioLinkConnected = true
+                AirPodsNotifications.AIRPODS_CONNECTED -> {
+                    isAudioLinkConnected = true
+                    // Socket data takes over again; no need to force a BLE report.
+                    reportNextStatus = false
+                }
                 AirPodsNotifications.AIRPODS_DISCONNECTED -> {
                     isAudioLinkConnected = false
                     reportNextStatus = true
@@ -311,7 +316,7 @@ class BLEManager(private val context: Context) {
     }
 
     fun startScanning() {
-        profileHandler.post {
+        onMain {
             scanningRequested = true
             isScreenOn = context.getSystemService(PowerManager::class.java)?.isInteractive ?: true
             isAudioLinkConnected = BluetoothConnectionManager.aacpSocket?.isConnected == true
@@ -395,9 +400,16 @@ class BLEManager(private val context: Context) {
                 override fun onBatchScanResults(results: List<ScanResult>) {
                     // The batch isn't in time order (the system builds it from a set), so sort it.
                     // Every result is processed so short changes like lid open → close aren't missed.
+                    val seen = LinkedHashSet<String>()
                     for (result in results.sortedBy { it.timestampNanos }) {
-                        processScanResult(result)
+                        processScanResult(result, notifySeen = false)?.let { seen.add(it) }
                     }
+                    // Takeover decisions use only the newest status per address, not an older
+                    // "Disconnected" from earlier in the same batch.
+                    for (address in seen) {
+                        deviceStatusMap[address]?.let { airPodsStatusListener?.onDeviceSeen(it) }
+                    }
+                    consecutiveScanFailures = 0
                 }
 
                 override fun onScanFailed(errorCode: Int) {
@@ -414,8 +426,13 @@ class BLEManager(private val context: Context) {
                             SCAN_FAILED_FEATURE_UNSUPPORTED -> Unit
                             SCAN_FAILED_SCANNING_TOO_FREQUENTLY ->
                                 if (scanningRequested) scheduleProfileUpdate(SCAN_RETRY_DELAY_MS)
-                            else ->
-                                if (scanningRequested) scheduleProfileUpdate(SCAN_QUICK_RETRY_DELAY_MS)
+                            else -> if (scanningRequested) {
+                                // Some errors persist (e.g. registration failures), so back off: 5 s, 10 s, ... up to 5 min.
+                                val delay = (SCAN_QUICK_RETRY_DELAY_MS shl consecutiveScanFailures.coerceAtMost(6))
+                                    .coerceAtMost(SCAN_MAX_RETRY_DELAY_MS)
+                                consecutiveScanFailures++
+                                scheduleProfileUpdate(delay)
+                            }
                         }
                     }
                 }
@@ -466,6 +483,7 @@ class BLEManager(private val context: Context) {
         // Without a scan nothing keeps this state fresh, so start over when scanning resumes.
         deviceStatusMap.clear()
         lastRawData.clear()
+        lastValidCaseBatteryMap.clear()
         currentGlobalLidState = null
     }
 
@@ -476,6 +494,8 @@ class BLEManager(private val context: Context) {
         val keyBase64 = sharedPreferences.getString(AACPManager.Companion.ProximityKeyType.ENC_KEY.name, null)
         if (keyBase64 != cachedEncKeyBase64) {
             cachedEncKeyBase64 = keyBase64
+            // Cached packets were parsed without (or with another) key; parse them again.
+            lastRawData.clear()
             cachedDecryptCipher = keyBase64?.let {
                 try {
                     Cipher.getInstance("AES/ECB/NoPadding").apply {
@@ -510,22 +530,23 @@ class BLEManager(private val context: Context) {
         return Pair(charging, level)
     }
 
-    private fun processScanResult(result: ScanResult) {
+    /** Returns the address if the result was one of our AirPods, null otherwise. */
+    private fun processScanResult(result: ScanResult, notifySeen: Boolean = true): String? {
         try {
-            val scanRecord = result.scanRecord ?: return
+            val scanRecord = result.scanRecord ?: return null
             val address = result.device.address
 
-            val manufacturerData = scanRecord.getManufacturerSpecificData(76) ?: return
-            if (manufacturerData.size <= 20) return
+            val manufacturerData = scanRecord.getManufacturerSpecificData(76) ?: return null
+            if (manufacturerData.size <= 20) return null
 
             if (!verifiedAddresses.contains(address)) {
-                val irk = getIrkFromPreferences() ?: return
-                if (rejectedAddresses.contains(address)) return
+                val irk = getIrkFromPreferences() ?: return null
+                if (rejectedAddresses.contains(address)) return null
                 if (!BluetoothCryptography.verifyRPA(address, irk)) {
                     // Addresses rotate, so keep this from growing forever.
                     if (rejectedAddresses.size >= MAX_REJECTED_ADDRESSES) rejectedAddresses.clear()
                     rejectedAddresses.add(address)
-                    return
+                    return null
                 }
                 if (verifiedAddresses.size >= MAX_VERIFIED_ADDRESSES) verifiedAddresses.clear()
                 verifiedAddresses.add(address)
@@ -540,8 +561,8 @@ class BLEManager(private val context: Context) {
             if (knownStatus != null && previousRaw != null && previousRaw.contentEquals(manufacturerData) && !reportNextStatus) {
                 val refreshed = knownStatus.copy(lastSeen = lastBroadcastTime)
                 deviceStatusMap[address] = refreshed
-                airPodsStatusListener?.onDeviceSeen(refreshed)
-                return
+                if (notifySeen) airPodsStatusListener?.onDeviceSeen(refreshed)
+                return address
             }
             lastRawData[address] = manufacturerData
 
@@ -557,7 +578,7 @@ class BLEManager(private val context: Context) {
             deviceStatusMap[address] = parsedStatus
 
             airPodsStatusListener?.let { listener ->
-                listener.onDeviceSeen(parsedStatus)
+                if (notifySeen) listener.onDeviceSeen(parsedStatus)
 
                 if (previousStatus == null) {
                     listener.onBroadcastFromNewAddress(parsedStatus)
@@ -610,8 +631,10 @@ class BLEManager(private val context: Context) {
                     }
                 }
             }
+            return address
         } catch (t: Throwable) {
             Log.e(TAG, "Error processing scan result", t)
+            return null
         }
     }
 
@@ -788,6 +811,7 @@ class BLEManager(private val context: Context) {
         private const val SCREEN_OFF_DEBOUNCE_MS = 15_000L
         private const val SCAN_RETRY_DELAY_MS = 30_000L
         private const val SCAN_QUICK_RETRY_DELAY_MS = 5_000L
+        private const val SCAN_MAX_RETRY_DELAY_MS = 5 * 60_000L
         private const val SCAN_START_WINDOW_MS = 30_000L
         private const val MAX_SCAN_STARTS_PER_WINDOW = 4
         private const val MAX_REJECTED_ADDRESSES = 256

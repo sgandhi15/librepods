@@ -23,12 +23,14 @@ When the profile switches:
 - A limiter allows at most 4 scan starts per 30 s. Android fails scans (`SCAN_FAILED_SCANNING_TOO_FREQUENTLY`) for apps that start more than 5.
 
 Restarts and retries:
-- After a failure the scan is retried, after 30 s for "too frequently" and 5 s for other errors. It is not retried when the feature is unsupported or the permission is missing.
+- After a failure the scan is retried: after 30 s for "too frequently", and for other errors after 5 s, backing off to at most 5 min while failures keep happening. It is not retried when the feature is unsupported or the permission is missing.
 - It restarts when Bluetooth turns back on.
 
 Device tracking:
 - In low-power mode, devices are kept for 90 s, because the incoming-call takeover reads the last known in-ear state when the phone rings.
-- Batch results are sorted by time and all of them are processed, so short changes like lid open → close aren't lost. Repeats of an identical packet skip decrypting and parsing.
+- Batch results are sorted by time and all of them are processed, so short changes like lid open → close aren't lost.
+- Takeover decisions use only the newest status from each batch.
+- Repeats of an identical packet skip decrypting and parsing.
 
 The "status changed" check no longer compares the timestamp. Before, while the AirPods weren't connected, it fired for every scan result and redrew the widget, notification and Bluetooth metadata. The first status from a new address is still reported, and after the direct connection drops, the next BLE status is reported even if unchanged, so the widget gets fresh battery data.
 
@@ -53,16 +55,17 @@ The address caches are size-limited and are cleared when the IRK changes.
 - Packet hex is formatted once per packet instead of twice.
 
 **Connecting**
-- Only one socket connection attempt runs at a time, whichever path starts it. Before, the BLE takeover, the ACL/A2DP receivers and `takeOver()` could connect in parallel and fight over the socket.
-- Sockets from failed attempts are closed; they used to leak.
-- The BLE "nobody is connected, take over" path runs in the background instead of blocking the main thread. Failed attempts back off from 15 s up to 5 min, and the back-off resets when the AirPods' state changes.
+- Only one socket connection attempt runs at a time, whichever path starts it. Before, the BLE takeover, the ACL/A2DP receivers and `takeOver()` could connect in parallel and fight over the socket. A request that arrives during an attempt is run afterwards if that attempt didn't connect.
+- Sockets from failed attempts are closed, both AACP and ATT; they used to leak.
+- When the reader ends, its dead socket is closed, so nothing keeps treating the link as up.
+- The BLE "nobody is connected, take over" path runs in the background instead of blocking the main thread. Failed attempts back off from 15 s up to 5 min. The back-off resets after any successful connection, when the lid opens, when the in-ear state changes, or when the AirPods report a state other than "Disconnected".
 
 **Battery updates**
 - A BLE battery change no longer runs the battery/widget/metadata update twice.
 
 ## Review findings
 
-In October 2026, 12 independent reviews checked this work: Claude Opus 5.5 and Fable 5.1, Codex GPT-6-Astra and GPT-6.1-Sol, and 8 free OpenCode models. Nemotron 3 Ultra failed to run. Every confirmed issue above is fixed.
+In October 2026, 12 independent reviews checked this work: Claude Opus 5.5 and Fable 5.1, Codex GPT-6-Astra and GPT-6.1-Sol, and 8 free OpenCode models. Nemotron 3 Ultra failed to run. Claude Opus and GPT-6.1-Sol then ran a verification round on the fixes. Every confirmed issue above is fixed.
 
 Claims checked and rejected:
 - **"`RECEIVER_NOT_EXPORTED` blocks the Bluetooth and screen broadcasts."** No. They come from system_server, which can deliver to non-exported receivers.
@@ -92,6 +95,8 @@ Each of these saves more battery but costs something, or is a separate bug.
 Bugs that already existed, found during review and not fixed here:
 - `disconnectAirPods()` clears the socket before calling `updateNotificationContent(false)`, so the "connected" notification isn't cancelled on a manual disconnect.
 - If the lid opens while the screen is off, the low-power scan can fire the popup in the dark, where it auto-closes before anyone sees it.
+- With the vendor-ID hook enabled, `connectToSocket` calls `attManager.startReader()` and `readCharacteristic()` before `BluetoothConnectionManager.attSocket` is assigned. On a fresh connection the reader stops at once and the reads return null.
+- After Bluetooth is turned back on with the case open, the popup shows again, because tracked lid state is reset when scanning stops.
 
 ## Measuring
 
