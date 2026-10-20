@@ -144,7 +144,10 @@ class BLEManager(private val context: Context) {
     // Fast scanning only runs within a window after either.
     private var screenOnAtMs = 0L
     private var lastOwnAdvertAtMs = 0L
-    private val fastWindowRunnable = Runnable { applyDesiredProfile() }
+    // Only meant to end fast scanning; screen-off and failure handling have their own timing.
+    private val fastWindowRunnable = Runnable {
+        if (isScreenOn && activeProfile == ScanProfile.FAST) applyDesiredProfile()
+    }
     private val scanStartTimes = ArrayDeque<Long>()
     private val currentProfile: ScanProfile get() = activeProfile ?: ScanProfile.FAST
 

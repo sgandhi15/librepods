@@ -16,7 +16,9 @@ The app used to scan at full power (`SCAN_MODE_LOW_LATENCY`) all the time. It no
 | Screen off | Low power | The popup can't be seen |
 | Screen on, AirPods connected | Balanced | Battery and state come over the direct connection; the popup is still caught within a few seconds |
 | Screen on, not connected, within 1 min of the screen turning on or 5 min of last hearing your AirPods | Full speed | The lid-open popup must be fast when the AirPods are likely to be picked up |
-| Screen on, not connected, otherwise | Balanced | Your AirPods probably aren't around (at home, or with another device). Balanced still hears them within a few seconds, and hearing them switches straight back to full speed |
+| Screen on, not connected, otherwise | Balanced | Your AirPods probably aren't around, for example left at home. Balanced still hears them within a few seconds, and hearing them switches straight back to full speed |
+
+AirPods in use with another device nearby, such as a Mac on the same desk, keep advertising, so scanning stays at full speed; the saving applies when they're out of range.
 
 The trade-off: if the screen has been on for over a minute and your AirPods haven't been heard for 5 minutes (for example, in a closed case in a pocket), the first popup can take about 3–4 s instead of under 1 s.
 
@@ -66,10 +68,11 @@ The address caches are size-limited and are cleared when the IRK changes.
 **Battery updates**
 - A BLE battery change no longer runs the battery/widget/metadata update twice.
 - A battery packet from the AirPods only updates metadata, the widget, the system battery broadcast and the notification when the values changed. The in-app `BATTERY_DATA` broadcast still goes out for every packet.
-- Audio is only connected or disconnected when "both pods charging" changes, instead of on every battery packet. Each call bound a profile proxy, and repeating it also undid deliberate audio disconnects, such as "disconnect when not wearing".
+- Audio is only connected or disconnected when "both pods charging" changes, instead of on every battery packet. Each call bound a profile proxy, and repeating it also undid deliberate audio disconnects, such as "disconnect when not wearing". Audio is also re-allowed explicitly when ownership comes back from another device and on "Reconnect" after a reverse, which the per-packet calls used to cover.
+- If HFP reconnects while the socket stays up, the battery is republished, because Android clears a headset's battery when HFP disconnects.
 
 **Other fixes**
-- If the lid opens while the screen is off, the popup is shown when the screen turns on. Before, it was shown in the dark, and since only one popup is shown per connection, you didn't get one at all.
+- If the lid opens while the popup can't be seen (screen off, or on the lock screen, which covers overlays), the popup is shown once the phone is on and unlocked. Before, it was shown where nobody could see it, and since only one popup is shown per connection, you didn't get one at all.
 - A manual disconnect now cancels the "connected" notification and closes the ATT socket.
 - With the vendor-ID hook, the ATT socket is now set before its reader starts. Before, the reader stopped at once on a new connection and the first reads failed.
 

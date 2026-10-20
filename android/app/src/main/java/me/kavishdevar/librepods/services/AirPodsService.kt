@@ -26,6 +26,7 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
+import android.app.KeyguardManager
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
@@ -170,16 +171,38 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
     @Volatile
     private var lastBothPodsCharging: Boolean? = null
 
-    // Lid opened while the screen was off: the popup is shown when the screen turns on instead,
-    // because it can't be seen in the dark and only one popup is shown per connection.
+    // Lid opened while the popup couldn't be seen (screen off, or behind the lock screen, which
+    // covers overlays): show it once the phone is on and unlocked instead, because only one popup
+    // is shown per connection.
     private var lidPopupPending = false
-    private val screenOnReceiver = object : BroadcastReceiver() {
+    private val deviceStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action != Intent.ACTION_SCREEN_ON || !lidPopupPending) return
-            lidPopupPending = false
-            if (bleManager.isLidOpen()) showPopup(this@AirPodsService, popupName())
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_ON, Intent.ACTION_USER_PRESENT -> {
+                    if (!lidPopupPending || !canShowPopupNow()) return
+                    lidPopupPending = false
+                    if (bleManager.isLidOpen()) showPopup(this@AirPodsService, popupName())
+                }
+                BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED -> {
+                    // Android forgets a headset's battery when HFP disconnects. If HFP comes back
+                    // while our socket stays up, republish now instead of waiting for a change.
+                    val state = intent.getIntExtra(BluetoothProfile.EXTRA_STATE, -1)
+                    val changed = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+                    if (state == BluetoothProfile.STATE_CONNECTED && changed != null &&
+                        changed.address == device?.address &&
+                        BluetoothConnectionManager.aacpSocket?.isConnected == true
+                    ) {
+                        lastPublishedBattery = null
+                        updateBattery()
+                    }
+                }
+            }
         }
     }
+
+    private fun canShowPopupNow(): Boolean =
+        getSystemService(PowerManager::class.java)?.isInteractive == true &&
+            getSystemService(KeyguardManager::class.java)?.isKeyguardLocked != true
 
     // Content of the last "connected" notification we posted, so identical updates can be skipped.
     @Volatile
@@ -367,10 +390,10 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                 Log.d(TAG, "Lid opened")
                 // The user is picking the AirPods up, so a takeover should happen promptly.
                 resetBleTakeoverBackoff()
-                if (getSystemService(PowerManager::class.java)?.isInteractive == false) {
-                    lidPopupPending = true
-                } else {
+                if (canShowPopupNow()) {
                     showPopup(this@AirPodsService, popupName())
+                } else {
+                    lidPopupPending = true
                 }
                 if (BluetoothConnectionManager.aacpSocket?.isConnected == true) return
                 val leftLevel = bleManager.getMostRecentStatus()?.leftBattery ?: 0
@@ -771,13 +794,17 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                         Log.d(TAG, "Ignoring disconnect from an old socket")
                         return
                     }
-                    device = null
 //                    isConnectedLocally = false
                     popupShown = false
                     updateNotificationContent(false)
                     aacpManager.disconnected()
-                    BluetoothConnectionManager.aacpSocket = null
-                    BluetoothConnectionManager.attSocket = null
+                    // A new attempt may already have set device and the ATT socket (it publishes ATT
+                    // before AACP); it publishes or cleans up its own references.
+                    if (!synchronized(connectLock) { connectRunning }) {
+                        device = null
+                        BluetoothConnectionManager.aacpSocket = null
+                        BluetoothConnectionManager.attSocket = null
+                    }
                 }
             }
         }
@@ -873,7 +900,11 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
 //            clearPacketLogs()
 //        }
 
-        registerReceiver(screenOnReceiver, IntentFilter(Intent.ACTION_SCREEN_ON), RECEIVER_NOT_EXPORTED)
+        registerReceiver(deviceStateReceiver, IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_USER_PRESENT)
+            addAction(BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED)
+        }, RECEIVER_NOT_EXPORTED)
         bleManager.startScanning()
     }
 
@@ -1031,6 +1062,13 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                     disconnectAudio(
                         this@AirPodsService, device
                     )
+                } else if (otherDeviceTookOver && lastBothPodsCharging != true) {
+                    // We got the AirPods back (e.g. switched back from another device). Audio was
+                    // blocked by disconnectAudio() above; the per-battery-packet reconnect that used
+                    // to undo that is gone, so re-allow it here.
+                    Log.d(TAG, "ownership regained, reconnecting audio")
+                    otherDeviceTookOver = false
+                    connectAudio(this@AirPodsService, device)
                 }
             }
 
@@ -2560,6 +2598,9 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
             refreshConnectedNotification()
             otherDeviceTookOver = false
             takeOver("music", manualTakeOverAfterReversed = true)
+            // takeOver() can return early (e.g. cached ownership state); the user asked for audio
+            // back, so re-allow it explicitly.
+            connectAudio(this, device)
         }
 
         return START_STICKY
@@ -3339,7 +3380,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
     override fun onDestroy() {
         clearPacketLogs()
         try {
-            unregisterReceiver(screenOnReceiver)
+            unregisterReceiver(deviceStateReceiver)
         } catch (e: Exception) {
             e.printStackTrace()
         }
