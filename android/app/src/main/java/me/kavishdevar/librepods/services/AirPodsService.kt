@@ -31,6 +31,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.appwidget.AppWidgetManager
+import android.bluetooth.BluetoothA2dp
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothHeadset
@@ -2582,7 +2583,14 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                 Log.d(TAG, "Received bluetooth connection broadcast: action=$action")
                 val uuid = ParcelUuid.fromString("74ec2172-0bad-4d01-8f77-997b2be0722a")
 
-                if (BluetoothDevice.ACTION_ACL_CONNECTED == action) {
+                // Audio (A2DP/HFP) connecting also counts, but only while we have no socket: covers the
+                // service starting after the ACL link came up but before audio was connected, when
+                // neither the start-up check nor ACL_CONNECTED would trigger a connection.
+                val profileConnected = (action == BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED ||
+                    action == BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED) &&
+                    intent.getIntExtra(BluetoothProfile.EXTRA_STATE, -1) == BluetoothProfile.STATE_CONNECTED &&
+                    BluetoothConnectionManager.aacpSocket?.isConnected != true
+                if (BluetoothDevice.ACTION_ACL_CONNECTED == action || profileConnected) {
                     if (bluetoothDevice.uuids?.contains(uuid) == true) {
                         val intent = Intent(AirPodsNotifications.AIRPODS_CONNECTION_DETECTED)
                         intent.putExtra("name", name)
