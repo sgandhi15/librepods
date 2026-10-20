@@ -101,6 +101,23 @@ Bugs that already existed, found during review and not fixed here:
 Side effects of this branch:
 - After Bluetooth is turned back on with the case open, the popup shows again, because tracked lid state is reset when scanning stops. On `main` the scan never restarted after a Bluetooth toggle at all, so BLE features stopped working until the service restarted.
 
+## Baseline (release 1.0.4, before this branch)
+
+Measured on a Galaxy S25 (SM-S931W, Android 17) on 2026-10-19: 5 h 52 min on battery since the last charge, 1285 mAh used by the whole phone.
+
+| What | LibrePods |
+|---|---|
+| Estimated power use | 9.96 mAh (0.8% of the drain, 14th of all apps) |
+| Bluetooth power blamed | 5.34 mAh |
+| CPU | 0.24 mAh (about 6 s of CPU time) |
+| BLE scan running | The whole 5 h 52 min, at full speed |
+| Scan results delivered | 5500 |
+| Notification posts (wakelocks) | 273 |
+
+Notes:
+- Android splits Bluetooth scan blame between every app scanning at the same time. Here that was Google Play services and a system service, which also scanned non-stop, plus some Samsung services part of the time.
+- The phone's total Bluetooth drain was 31.5 mAh. The radio runs at the most aggressive mode any app asks for, so LibrePods' full-speed scan probably set the pace. Its real cost is somewhere between its blamed 5 mAh and most of that 31.5 mAh.
+
 ## Measuring
 
 Battery stats work on the release build; no debug build is needed.
