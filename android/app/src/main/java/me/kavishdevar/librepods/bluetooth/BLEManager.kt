@@ -18,6 +18,7 @@
 
 package me.kavishdevar.librepods.bluetooth
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
@@ -31,6 +32,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.SharedPreferences
+import android.content.pm.PackageManager
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
@@ -91,7 +93,8 @@ class BLEManager(private val context: Context) {
     private val sharedPreferences: SharedPreferences = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
     private var currentGlobalLidState: Boolean? = null
     private var lastBroadcastTime: Long = 0
-    private val processedAddresses = mutableSetOf<String>()
+    // Last raw advertisement per address, so repeats of the same packet skip decrypting and parsing.
+    private val lastRawData = mutableMapOf<String, ByteArray>()
 
     // Addresses that failed RPA verification (for example, someone else's AirPods nearby).
     // Remembered so we don't run AES on every advertisement they send.
@@ -105,7 +108,7 @@ class BLEManager(private val context: Context) {
 
     /**
      * How hard we scan. Scanning is the main battery cost of this class, so we only use
-     * the fast mode while the screen is on and AirPods aren't connected yet, which is when
+     * the fast mode while the screen is on and AirPods aren't connected, which is when
      * the lid-open popup has to appear quickly.
      */
     private enum class ScanProfile(
@@ -118,16 +121,19 @@ class BLEManager(private val context: Context) {
         FAST(ScanSettings.SCAN_MODE_LOW_LATENCY, 500L, 2_500L, 15_000L),
         // Screen on, AirPods connected. Battery and state come over the AACP socket instead.
         BALANCED(ScanSettings.SCAN_MODE_BALANCED, 1_000L, 6_000L, 20_000L),
-        // Screen off, or AirPods connected and both in the ears (so the case lid can't be opened
-        // to take them out). A slow scan is enough.
-        LOW_POWER(ScanSettings.SCAN_MODE_LOW_POWER, 5_000L, 15_000L, 30_000L)
+        // Screen off. The popup can't be seen, so a slow scan is enough. Devices are kept for
+        // longer because results are sparse, and the incoming-call takeover reads the last
+        // known in-ear state when the phone starts ringing.
+        LOW_POWER(ScanSettings.SCAN_MODE_LOW_POWER, 5_000L, 15_000L, 90_000L)
     }
 
     private var scanningRequested = false
     private var activeProfile: ScanProfile? = null
     private var isScreenOn = true
     private var isAudioLinkConnected = false
-    private var bothInEar = false
+    // Set when the AACP link drops: the next BLE status is reported even if unchanged, so
+    // battery shown from the socket is replaced with fresh BLE data.
+    private var reportNextStatus = false
     private val scanStartTimes = ArrayDeque<Long>()
     private val currentProfile: ScanProfile get() = activeProfile ?: ScanProfile.FAST
 
@@ -154,7 +160,7 @@ class BLEManager(private val context: Context) {
                 AirPodsNotifications.AIRPODS_CONNECTED -> isAudioLinkConnected = true
                 AirPodsNotifications.AIRPODS_DISCONNECTED -> {
                     isAudioLinkConnected = false
-                    bothInEar = false
+                    reportNextStatus = true
                 }
                 BluetoothAdapter.ACTION_STATE_CHANGED -> {
                     val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
@@ -220,20 +226,17 @@ class BLEManager(private val context: Context) {
         val linkUp = isAudioLinkConnected && BluetoothConnectionManager.aacpSocket?.isConnected == true
         return when {
             !isScreenOn -> ScanProfile.LOW_POWER
-            linkUp && bothInEar -> ScanProfile.LOW_POWER
             linkUp -> ScanProfile.BALANCED
             else -> ScanProfile.FAST
         }
     }
 
-    /** Called by the service when the in-ear state reported over the AACP socket changes. */
-    fun setBothInEar(inEar: Boolean) {
-        profileHandler.post {
-            if (bothInEar == inEar) return@post
-            bothInEar = inEar
-            // Wait a bit so adjusting an AirPod doesn't restart the scan each time.
-            scheduleProfileUpdate(EAR_STATE_DEBOUNCE_MS)
-        }
+    private fun hasScanPermission(): Boolean =
+        context.checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED
+
+    /** Runs right away on the main thread, or posts to it from other threads. */
+    private fun onMain(block: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) block() else profileHandler.post(block)
     }
 
     private fun scheduleProfileUpdate(delayMs: Long = PROFILE_CHANGE_DEBOUNCE_MS) {
@@ -243,6 +246,11 @@ class BLEManager(private val context: Context) {
 
     private fun applyDesiredProfile() {
         if (!scanningRequested) return
+        if (!hasScanPermission()) {
+            // No point retrying on a timer; the next screen or Bluetooth event checks again.
+            Log.w(TAG, "BLUETOOTH_SCAN not granted, not scanning")
+            return
+        }
         val desired = desiredProfile()
         if (desired == null) {
             if (mScanCallback != null) {
@@ -253,8 +261,8 @@ class BLEManager(private val context: Context) {
         }
         if (desired == activeProfile && mScanCallback != null) return
 
-        // Android silently stops delivering results to apps that start more than
-        // 5 scans in 30 seconds, so space out restarts if the screen is toggled a lot.
+        // Android fails scans (SCAN_FAILED_SCANNING_TOO_FREQUENTLY) for apps that start more
+        // than 5 in 30 seconds, so space out restarts if the screen is toggled a lot.
         val now = SystemClock.elapsedRealtime()
         while (scanStartTimes.isNotEmpty() && now - scanStartTimes.first() > SCAN_START_WINDOW_MS) {
             scanStartTimes.removeFirst()
@@ -310,12 +318,10 @@ class BLEManager(private val context: Context) {
             registerStateReceiver()
             sharedPreferences.registerOnSharedPreferenceChangeListener(keyListener)
             profileHandler.removeCallbacks(applyProfileRunnable)
-            val profile = desiredProfile()
-            if (profile != null) {
-                startScanInternal(profile)
-            } else {
+            if (desiredProfile() == null) {
                 Log.d(TAG, "No IRK saved yet, not scanning until the AirPods connect once")
             }
+            applyDesiredProfile()
         }
     }
 
@@ -334,8 +340,8 @@ class BLEManager(private val context: Context) {
 
             if (mBluetoothLeScanner != null && mScanCallback != null) {
                 try {
-                    // Deliver anything still batched before restarting, so it isn't lost.
-                    if (btAdapter.isEnabled) mBluetoothLeScanner?.flushPendingScanResults(mScanCallback)
+                    // Results still batched in the old scan are dropped here. Flushing first doesn't
+                    // help: delivery is async and stopScan() unregisters the callback before it arrives.
                     mBluetoothLeScanner?.stopScan(mScanCallback)
                 } catch (t: Throwable) {
                     // Throws if Bluetooth is off; the old scan is gone anyway.
@@ -353,6 +359,12 @@ class BLEManager(private val context: Context) {
             }
 
             mBluetoothLeScanner = btAdapter.bluetoothLeScanner
+            if (mBluetoothLeScanner == null) {
+                Log.w(TAG, "No BLE scanner available, will retry")
+                activeProfile = null
+                if (scanningRequested) scheduleProfileUpdate(SCAN_RETRY_DELAY_MS)
+                return
+            }
 
             val scanSettings = ScanSettings.Builder()
                 .setScanMode(profile.scanMode)
@@ -381,10 +393,9 @@ class BLEManager(private val context: Context) {
                 }
 
                 override fun onBatchScanResults(results: List<ScanResult>) {
-                    processedAddresses.clear()
-                    // Results are oldest first and only one per address is processed,
-                    // so go newest first to act on the latest state.
-                    for (result in results.asReversed()) {
+                    // The batch isn't in time order (the system builds it from a set), so sort it.
+                    // Every result is processed so short changes like lid open → close aren't missed.
+                    for (result in results.sortedBy { it.timestampNanos }) {
                         processScanResult(result)
                     }
                 }
@@ -398,7 +409,14 @@ class BLEManager(private val context: Context) {
                         mScanCallback = null
                         activeProfile = null
                         cleanupHandler.removeCallbacks(cleanupRunnable)
-                        if (scanningRequested) scheduleProfileUpdate(SCAN_RETRY_DELAY_MS)
+                        when (errorCode) {
+                            // Retrying can't help; the next screen or Bluetooth event tries again.
+                            SCAN_FAILED_FEATURE_UNSUPPORTED -> Unit
+                            SCAN_FAILED_SCANNING_TOO_FREQUENTLY ->
+                                if (scanningRequested) scheduleProfileUpdate(SCAN_RETRY_DELAY_MS)
+                            else ->
+                                if (scanningRequested) scheduleProfileUpdate(SCAN_QUICK_RETRY_DELAY_MS)
+                        }
                     }
                 }
             }
@@ -414,12 +432,14 @@ class BLEManager(private val context: Context) {
             cleanupHandler.postDelayed(cleanupRunnable, CLEANUP_INTERVAL_MS)
         } catch (t: Throwable) {
             Log.e(TAG, "Error starting BLE scanner", t)
-            if (scanningRequested) scheduleProfileUpdate(SCAN_RETRY_DELAY_MS)
+            activeProfile = null
+            // A missing permission won't fix itself on a timer.
+            if (scanningRequested && t !is SecurityException) scheduleProfileUpdate(SCAN_RETRY_DELAY_MS)
         }
     }
 
     fun stopScanning() {
-        profileHandler.post {
+        onMain {
             scanningRequested = false
             profileHandler.removeCallbacks(applyProfileRunnable)
             unregisterStateReceiver()
@@ -437,10 +457,16 @@ class BLEManager(private val context: Context) {
                 Log.d(TAG, "Stopping BLE scanner")
                 mBluetoothLeScanner?.stopScan(mScanCallback)
             }
+            mScanCallback = null
         } catch (t: Throwable) {
-            Log.e(TAG, "Error stopping BLE scanner", t)
+            // Fails while Bluetooth is turning off. Keep the callback so the next stop
+            // (STATE_OFF) or restart can try again.
+            Log.w(TAG, "Couldn't stop BLE scanner: ${t.message}")
         }
-        mScanCallback = null
+        // Without a scan nothing keeps this state fresh, so start over when scanning resumes.
+        deviceStatusMap.clear()
+        lastRawData.clear()
+        currentGlobalLidState = null
     }
 
     /** Returns a ready-to-use AES decrypt cipher for the stored encryption key, or null if there is none. */
@@ -489,10 +515,6 @@ class BLEManager(private val context: Context) {
             val scanRecord = result.scanRecord ?: return
             val address = result.device.address
 
-            if (processedAddresses.contains(address)) {
-                return
-            }
-
             val manufacturerData = scanRecord.getManufacturerSpecificData(76) ?: return
             if (manufacturerData.size <= 20) return
 
@@ -505,12 +527,23 @@ class BLEManager(private val context: Context) {
                     rejectedAddresses.add(address)
                     return
                 }
+                if (verifiedAddresses.size >= MAX_VERIFIED_ADDRESSES) verifiedAddresses.clear()
                 verifiedAddresses.add(address)
                 Log.d(TAG, "RPA verified and added to trusted list: $address")
             }
 
-            processedAddresses.add(address)
             lastBroadcastTime = System.currentTimeMillis()
+
+            // Same bytes as last time: nothing changed, just note that we saw it.
+            val previousRaw = lastRawData[address]
+            val knownStatus = deviceStatusMap[address]
+            if (knownStatus != null && previousRaw != null && previousRaw.contentEquals(manufacturerData) && !reportNextStatus) {
+                val refreshed = knownStatus.copy(lastSeen = lastBroadcastTime)
+                deviceStatusMap[address] = refreshed
+                airPodsStatusListener?.onDeviceSeen(refreshed)
+                return
+            }
+            lastRawData[address] = manufacturerData
 
             val decryptCipher = getDecryptCipher()
             val decryptedData = if (decryptCipher != null) decryptLastBytes(manufacturerData, decryptCipher) else null
@@ -537,11 +570,15 @@ class BLEManager(private val context: Context) {
                     }
 
                     // Report the first status too, so battery shows up without waiting for a change.
+                    if (BluetoothConnectionManager.aacpSocket?.isConnected != true) reportNextStatus = false
                     listener.onDeviceStatusChanged(parsedStatus, null)
                 } else {
                     // Ignore lastSeen: it changes on every advertisement, which made this fire
                     // (and redraw widgets and notifications) for every scan result.
-                    if (parsedStatus.copy(lastSeen = 0L) != previousStatus.copy(lastSeen = 0L)) {
+                    val changed = parsedStatus.copy(lastSeen = 0L) != previousStatus.copy(lastSeen = 0L)
+                    val forceReport = reportNextStatus && BluetoothConnectionManager.aacpSocket?.isConnected != true
+                    if (changed || forceReport) {
+                        reportNextStatus = false
                         listener.onDeviceStatusChanged(parsedStatus, previousStatus)
                     }
 
@@ -644,6 +681,8 @@ class BLEManager(private val context: Context) {
 
         for (device in staleDevices) {
             deviceStatusMap.remove(device.key)
+            lastRawData.remove(device.key)
+            lastValidCaseBatteryMap.remove(device.key)
             Log.d(TAG, "Removed stale device from tracking: ${device.key}")
         }
 
@@ -667,8 +706,9 @@ class BLEManager(private val context: Context) {
         val irkBase64 = sharedPreferences.getString(AacpIrkKey, null)
         if (irkBase64 != cachedIrkBase64) {
             cachedIrkBase64 = irkBase64
-            // A new key may match addresses we rejected before.
+            // Results checked against the old key are no longer valid either way.
             rejectedAddresses.clear()
+            verifiedAddresses.clear()
             cachedIrk = irkBase64?.let {
                 try {
                     Base64.decode(it)
@@ -746,10 +786,11 @@ class BLEManager(private val context: Context) {
         private const val CLEANUP_INTERVAL_MS = 10000L
         private const val PROFILE_CHANGE_DEBOUNCE_MS = 1_000L
         private const val SCREEN_OFF_DEBOUNCE_MS = 15_000L
-        private const val EAR_STATE_DEBOUNCE_MS = 10_000L
         private const val SCAN_RETRY_DELAY_MS = 30_000L
+        private const val SCAN_QUICK_RETRY_DELAY_MS = 5_000L
         private const val SCAN_START_WINDOW_MS = 30_000L
         private const val MAX_SCAN_STARTS_PER_WINDOW = 4
         private const val MAX_REJECTED_ADDRESSES = 256
+        private const val MAX_VERIFIED_ADDRESSES = 256
     }
 }

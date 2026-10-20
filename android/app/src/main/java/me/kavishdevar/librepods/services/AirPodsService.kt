@@ -170,9 +170,13 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
 
     private val packetLogPersistPending = AtomicBoolean(false)
 
-    private val bleTakeoverInProgress = AtomicBoolean(false)
+    // Only one socket connection attempt at a time, whoever starts it.
+    private val socketConnectInProgress = AtomicBoolean(false)
+
     @Volatile
     private var lastBleTakeoverAttempt = 0L
+    @Volatile
+    private var bleTakeoverCooldownMs = BLE_TAKEOVER_MIN_COOLDOWN_MS
     private var otherDeviceTookOver = false
 
     data class ServiceConfig(
@@ -255,22 +259,24 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
         }
 
         private const val PACKET_LOG_PERSIST_DELAY_MS = 10_000L
-        private const val BLE_TAKEOVER_COOLDOWN_MS = 15_000L
+        private const val BLE_TAKEOVER_MIN_COOLDOWN_MS = 15_000L
+        private const val BLE_TAKEOVER_MAX_COOLDOWN_MS = 5 * 60_000L
         private const val NOTIFICATION_REFRESH_MS = 60_000L
     }
 
     /**
      * Called when BLE says the AirPods aren't connected to anything. Connects in the
-     * background, one attempt at a time with a cooldown, instead of blocking the main
-     * thread on every scan result.
+     * background instead of blocking the main thread on every scan result. Failed attempts
+     * back off from 15 s up to 5 min, so AirPods that refuse the connection don't get
+     * paged forever.
      */
     @SuppressLint("MissingPermission")
     private fun takeOverFromBle() {
         val now = SystemClock.elapsedRealtime()
-        if (now - lastBleTakeoverAttempt < BLE_TAKEOVER_COOLDOWN_MS) return
+        if (now - lastBleTakeoverAttempt < bleTakeoverCooldownMs) return
+        if (socketConnectInProgress.get()) return
         val mac = sharedPreferences.getString("mac_address", "") ?: ""
         if (mac.isEmpty()) return
-        if (!bleTakeoverInProgress.compareAndSet(false, true)) return
         lastBleTakeoverAttempt = now
         Log.d(TAG, "Seems no device has taken over, we will.")
         CoroutineScope(Dispatchers.IO).launch {
@@ -279,17 +285,23 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                 connectToSocket(bluetoothAdapter, bluetoothAdapter.getRemoteDevice(mac))
             } catch (e: Exception) {
                 Log.e(TAG, "Takeover from BLE failed: ${e.message}")
-            } finally {
-                bleTakeoverInProgress.set(false)
+            }
+            bleTakeoverCooldownMs = if (BluetoothConnectionManager.aacpSocket?.isConnected == true) {
+                BLE_TAKEOVER_MIN_COOLDOWN_MS
+            } else {
+                (bleTakeoverCooldownMs * 2).coerceAtMost(BLE_TAKEOVER_MAX_COOLDOWN_MS)
             }
         }
     }
 
     private val bleStatusListener = object : BLEManager.AirPodsStatusListener {
         override fun onDeviceSeen(device: BLEManager.AirPodsStatus) {
-            // Checked on every advertisement so failed attempts keep retrying; takeOverFromBle() throttles itself.
-            if (device.connectionState == "Disconnected" && BluetoothConnectionManager.aacpSocket?.isConnected != true) { // should never happen unless android messes up and sends us a stale broadcast
+            // AirPods say they aren't connected to anything, so take over. Checked on every
+            // advertisement so failed attempts are retried; takeOverFromBle() throttles itself.
+            if (device.connectionState == "Disconnected" && BluetoothConnectionManager.aacpSocket?.isConnected != true) {
                 takeOverFromBle()
+            } else if (device.connectionState != "Disconnected") {
+                bleTakeoverCooldownMs = BLE_TAKEOVER_MIN_COOLDOWN_MS
             }
         }
 
@@ -365,23 +377,8 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
         }
 
         override fun onBatteryChanged(device: BLEManager.AirPodsStatus) {
-            if (BluetoothConnectionManager.aacpSocket?.isConnected == true) return
-            val leftLevel = bleManager.getMostRecentStatus()?.leftBattery ?: 0
-            val rightLevel = bleManager.getMostRecentStatus()?.rightBattery ?: 0
-            val caseLevel = bleManager.getMostRecentStatus()?.caseBattery ?: 0
-            val leftCharging = bleManager.getMostRecentStatus()?.isLeftCharging
-            val rightCharging = bleManager.getMostRecentStatus()?.isRightCharging
-            val caseCharging = bleManager.getMostRecentStatus()?.isCaseCharging
-
-            batteryNotification.setBatteryDirect(
-                leftLevel = leftLevel,
-                leftCharging = leftCharging == true,
-                rightLevel = rightLevel,
-                rightCharging = rightCharging == true,
-                caseLevel = caseLevel,
-                caseCharging = caseCharging == true
-            )
-            updateBattery()
+            // A battery change is also a status change, and onDeviceStatusChanged (called just
+            // before this) already updated the battery, widget, metadata and notification.
             Log.d(TAG, "Battery changed")
         }
 
@@ -836,9 +833,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
 //            clearPacketLogs()
 //        }
 
-        CoroutineScope(Dispatchers.IO).launch {
-            bleManager.startScanning()
-        }
+        bleManager.startScanning()
     }
 
     @Suppress("unused")
@@ -1281,7 +1276,6 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
         )
         var justEnabledA2dp = false
         earDetectionNotification.setStatus(earDetection)
-        bleManager.setBothInEar(earDetectionNotification.status.all { it == 0x00.toByte() })
         if (config.earDetectionEnabled) {
             val data = earDetection.copyOfRange(earDetection.size - 2, earDetection.size)
             inEar = data[0] == 0x00.toByte() && data[1] == 0x00.toByte()
@@ -1644,8 +1638,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
         }
     }
 
-    private fun logPacket(packet: ByteArray, @Suppress("SameParameterValue") source: String) {
-        val packetHex = packet.joinToString(" ") { "%02X".format(it) }
+    private fun logPacket(packetHex: String, @Suppress("SameParameterValue") source: String) {
         val logEntry = "$source: $packetHex"
 
         synchronized(inMemoryLogs) {
@@ -1656,7 +1649,6 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                 }
             }
 
-            _packetLogsFlow.value = inMemoryLogs.toSet()
         }
 
         schedulePacketLogPersist()
@@ -1672,6 +1664,9 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
             delay(PACKET_LOG_PERSIST_DELAY_MS)
             packetLogPersistPending.set(false)
             val snapshot = synchronized(inMemoryLogs) { inMemoryLogs.toSet() }
+            // Updated here rather than per packet: copying up to 1000 entries for every packet
+            // was wasted work, and nothing currently collects this flow.
+            _packetLogsFlow.value = snapshot
             sharedPreferencesLogs.edit { putStringSet(packetLogKey, snapshot) }
         }
     }
@@ -2095,6 +2090,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
         appWidgetManager.updateAppWidget(widgetIds, remoteViews)
     }
 
+    @Synchronized
     @OptIn(ExperimentalMaterial3Api::class)
     fun updateNotificationContent(
         connected: Boolean, airpodsName: String? = null, batteryList: List<Battery>? = null
@@ -2709,6 +2705,23 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
         adapter: BluetoothAdapter, device: BluetoothDevice, manual: Boolean = false
     ) {
         if (BluetoothConnectionManager.aacpSocket != null && BluetoothConnectionManager.aacpSocket?.isConnected == true) return
+        // Several paths (BLE takeover, ACL/A2DP receivers, takeOver(), manual reconnect) can call
+        // this at the same time. Two parallel attempts can both succeed and fight over the socket.
+        if (!socketConnectInProgress.compareAndSet(false, true)) {
+            Log.d(TAG, "Socket connection already in progress, skipping")
+            return
+        }
+        try {
+            connectToSocketLocked(adapter, device, manual)
+        } finally {
+            socketConnectInProgress.set(false)
+        }
+    }
+
+    @SuppressLint("MissingPermission", "UnspecifiedRegisterReceiverFlag")
+    private fun connectToSocketLocked(
+        adapter: BluetoothAdapter, device: BluetoothDevice, manual: Boolean
+    ) {
         Log.d(TAG, "<LogCollector:Start> Connecting to socket")
         val uuid: ParcelUuid = ParcelUuid.fromString("74ec2172-0bad-4d01-8f77-997b2be0722a")
 //        if (!isConnectedLocally) {
@@ -2794,6 +2807,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                         } else {
                             showSocketConnectionFailureNotification("Couldn't connect to socket: ${e.localizedMessage}")
                         }
+                        closeUnusedSocket(socket)
                         return@withTimeout
 //                            throw e // lol how did i not catch this before... gonna comment this line instead of removing to preserve history
                     }
@@ -2801,6 +2815,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
             }
             if (!socket.isConnected) {
                 Log.d(TAG, "<LogCollector:Complete:Failed> socket not connected")
+                closeUnusedSocket(socket)
                 if (manual) {
                     sendToast(
                         "Couldn't connect to socket: timeout."
@@ -2863,8 +2878,9 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                                 aacpManager.receivePacket(data)
 
                                 if (!isHeadTrackingData(data)) {
-                                    Log.d("AirPodsData", "Data received: ${data.joinToString(" ") { b -> "%02X".format(b) }}")
-                                    logPacket(data, "AirPods")
+                                    val hex = data.joinToString(" ") { b -> "%02X".format(b) }
+                                    Log.d("AirPodsData", "Data received: $hex")
+                                    logPacket(hex, "AirPods")
                                 }
 
                             } else if (bytesRead == -1) {
@@ -2898,6 +2914,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
         } catch (e: Exception) {
             e.printStackTrace()
             Log.d(TAG, "Failed to connect to BluetoothConnectionManager.aacpSocket?: ${e.message}")
+            closeUnusedSocket(socket)
             showSocketConnectionFailureNotification("Failed to establish connection: ${e.localizedMessage}")
 //                isConnectedLocally = false
             this@AirPodsService.device = device
@@ -2906,6 +2923,16 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
 //        } else {
 //            Log.d(TAG, "Already connected locally, skipping BluetoothConnectionManager.aacpSocket? connection (isConnectedLocally = $isConnectedLocally, BluetoothConnectionManager.aacpSocket?.isConnected = ${this::BluetoothConnectionManager.aacpSocket?.isInitialized && BluetoothConnectionManager.aacpSocket?.isConnected})")
 //        }
+    }
+
+    /** Closes a socket from a failed attempt so it doesn't leak, unless it became the active one. */
+    private fun closeUnusedSocket(socket: BluetoothSocket) {
+        if (BluetoothConnectionManager.aacpSocket === socket) return
+        try {
+            socket.close()
+        } catch (e: Exception) {
+            Log.w(TAG, "Couldn't close unused socket: ${e.message}")
+        }
     }
 
     fun disconnectForCD() {
