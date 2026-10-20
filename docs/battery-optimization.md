@@ -136,3 +136,28 @@ For `me.kavishdevar.librepods`, look at:
 - the estimated power use
 
 Compare a run of the old build with a run of this branch.
+
+### Side-by-side test build
+
+To test without replacing the official app, build the debug APK under another package name and app label, using a Gradle init script kept outside the repo:
+
+```groovy
+// separate-app.gradle
+allprojects {
+    pluginManager.withPlugin('com.android.application') {
+        android.buildTypes.debug.applicationIdSuffix = '.battery'
+        android.sourceSets.debug.res.srcDirs += '/path/to/res'  // values/strings.xml with app_name "LibrePods Battery"
+    }
+}
+```
+
+```sh
+./gradlew --init-script separate-app.gradle :app:assembleFossDebug
+adb install -r app/build/outputs/apk/foss/debug/app-foss-debug.apk
+adb shell am force-stop me.kavishdevar.librepods   # only one app may talk to the AirPods
+```
+
+Things to watch:
+- Don't open the official app while testing. Opening it restarts its service, and the two apps then fight over the AirPods.
+- To go back, uninstall `me.kavishdevar.librepods.battery` and open the official app.
+
