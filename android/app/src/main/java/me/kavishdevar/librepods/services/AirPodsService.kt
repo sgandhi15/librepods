@@ -55,6 +55,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.ParcelUuid
+import android.os.PowerManager
 import android.os.SystemClock
 import android.os.UserHandle
 import android.provider.Settings
@@ -161,6 +162,24 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
     var airpodsInstance: AirPodsInstance? = null
     var cameraActive = false
     private var disconnectedBecauseReversed = false
+
+    // Last battery published to metadata/widget/notification, and the last "both pods charging"
+    // state acted on. Reset on each new connection.
+    @Volatile
+    private var lastPublishedBattery: List<Battery>? = null
+    @Volatile
+    private var lastBothPodsCharging: Boolean? = null
+
+    // Lid opened while the screen was off: the popup is shown when the screen turns on instead,
+    // because it can't be seen in the dark and only one popup is shown per connection.
+    private var lidPopupPending = false
+    private val screenOnReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != Intent.ACTION_SCREEN_ON || !lidPopupPending) return
+            lidPopupPending = false
+            if (bleManager.isLidOpen()) showPopup(this@AirPodsService, popupName())
+        }
+    }
 
     // Content of the last "connected" notification we posted, so identical updates can be skipped.
     @Volatile
@@ -348,11 +367,11 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                 Log.d(TAG, "Lid opened")
                 // The user is picking the AirPods up, so a takeover should happen promptly.
                 resetBleTakeoverBackoff()
-                showPopup(
-                    this@AirPodsService,
-                    getSharedPreferences("settings", MODE_PRIVATE).getString("name", "AirPods Pro")
-                        ?: "AirPods"
-                )
+                if (getSystemService(PowerManager::class.java)?.isInteractive == false) {
+                    lidPopupPending = true
+                } else {
+                    showPopup(this@AirPodsService, popupName())
+                }
                 if (BluetoothConnectionManager.aacpSocket?.isConnected == true) return
                 val leftLevel = bleManager.getMostRecentStatus()?.leftBattery ?: 0
                 val rightLevel = bleManager.getMostRecentStatus()?.rightBattery ?: 0
@@ -372,6 +391,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                 sendBatteryBroadcast()
             } else {
                 Log.d(TAG, "Lid closed")
+                lidPopupPending = false
             }
         }
 
@@ -853,6 +873,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
 //            clearPacketLogs()
 //        }
 
+        registerReceiver(screenOnReceiver, IntentFilter(Intent.ACTION_SCREEN_ON), RECEIVER_NOT_EXPORTED)
         bleManager.startScanning()
     }
 
@@ -916,11 +937,17 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
             @SuppressLint("MissingPermission")
             override fun onBatteryInfoReceived(batteryInfo: ByteArray) {
                 batteryNotification.setBattery(batteryInfo)
+                val battery = batteryNotification.getBattery().toList()
+                // In-app listeners (popup, island, UI) still get every packet.
                 sendBroadcast(Intent(AirPodsNotifications.BATTERY_DATA).apply {
-                    putParcelableArrayListExtra("data", ArrayList(batteryNotification.getBattery()))
+                    putParcelableArrayListExtra("data", ArrayList(battery))
                     setPackage(packageName)
                 })
-                updateBattery() // also updates the notification
+                // Metadata, widget, system battery broadcast and notification only on a real change.
+                if (battery != lastPublishedBattery) {
+                    lastPublishedBattery = battery
+                    updateBattery() // also updates the notification
+                }
 //                CrossDevice.sendRemotePacket(batteryInfo)
 //                CrossDevice.batteryBytes = batteryInfo
 
@@ -931,10 +958,16 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                     )
                 }
 
-                if (batteryNotification.getBattery()[0].status == BatteryStatus.CHARGING && batteryNotification.getBattery()[1].status == BatteryStatus.CHARGING) {
-                    disconnectAudio(this@AirPodsService, device)
-                } else {
-                    connectAudio(this@AirPodsService, device)
+                // Only act when "both pods charging" changes. Each call binds a profile proxy, and
+                // doing it on every packet also undid a deliberate audio disconnect (e.g. not wearing).
+                val bothCharging = battery[0].status == BatteryStatus.CHARGING && battery[1].status == BatteryStatus.CHARGING
+                if (bothCharging != lastBothPodsCharging) {
+                    lastBothPodsCharging = bothCharging
+                    if (bothCharging) {
+                        disconnectAudio(this@AirPodsService, device)
+                    } else {
+                        connectAudio(this@AirPodsService, device)
+                    }
                 }
             }
 
@@ -1714,6 +1747,9 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
 
 
     var popupShown = false
+    private fun popupName(): String =
+        getSharedPreferences("settings", MODE_PRIVATE).getString("name", "AirPods Pro") ?: "AirPods"
+
     fun showPopup(service: Service, name: String) {
         if (!sharedPreferences.getBoolean("show_bottom_sheet_popup", true)) {
             return
@@ -2810,6 +2846,9 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                         attSocket?.connect()
 
                         if (attSocket != null) {
+                            // The reader and reads use BluetoothConnectionManager.attSocket, so it has
+                            // to be set first; before, the reader stopped at once on a new connection.
+                            BluetoothConnectionManager.attSocket = attSocket
                             attManager.startReader()
                             attManager.readCharacteristic(ATTHandles.LOUD_SOUND_REDUCTION)
                             attManager.readCharacteristic(ATTHandles.TRANSPARENCY)
@@ -2819,6 +2858,8 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                         BluetoothConnectionManager.aacpSocket = socket
                         BluetoothConnectionManager.attSocket = attSocket
                         lastConnectedNotificationKey = null
+                        lastPublishedBattery = null
+                        lastBothPodsCharging = null
 
                         // Create AirPodsInstance from stored config if available
                         if (airpodsInstance == null && config.airpodsModelNumber.isNotEmpty()) {
@@ -2866,8 +2907,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                         } else {
                             showSocketConnectionFailureNotification("Couldn't connect to socket: ${e.localizedMessage}")
                         }
-                        closeUnusedSocket(socket)
-                        closeUnusedSocket(attemptAttSocket)
+                        discardFailedAttempt(socket, attemptAttSocket)
                         return@withTimeout
 //                            throw e // lol how did i not catch this before... gonna comment this line instead of removing to preserve history
                     }
@@ -2875,8 +2915,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
             }
             if (!socket.isConnected) {
                 Log.d(TAG, "<LogCollector:Complete:Failed> socket not connected")
-                closeUnusedSocket(socket)
-                closeUnusedSocket(attemptAttSocket)
+                discardFailedAttempt(socket, attemptAttSocket)
                 if (manual) {
                     sendToast(
                         "Couldn't connect to socket: timeout."
@@ -2979,8 +3018,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
         } catch (e: Exception) {
             e.printStackTrace()
             Log.d(TAG, "Failed to connect to BluetoothConnectionManager.aacpSocket?: ${e.message}")
-            closeUnusedSocket(socket)
-            closeUnusedSocket(attemptAttSocket)
+            discardFailedAttempt(socket, attemptAttSocket)
             showSocketConnectionFailureNotification("Failed to establish connection: ${e.localizedMessage}")
 //                isConnectedLocally = false
             this@AirPodsService.device = device
@@ -2989,6 +3027,19 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
 //        } else {
 //            Log.d(TAG, "Already connected locally, skipping BluetoothConnectionManager.aacpSocket? connection (isConnectedLocally = $isConnectedLocally, BluetoothConnectionManager.aacpSocket?.isConnected = ${this::BluetoothConnectionManager.aacpSocket?.isInitialized && BluetoothConnectionManager.aacpSocket?.isConnected})")
 //        }
+    }
+
+    /** Cleans up a failed connection attempt: its ATT reader and both sockets. */
+    private fun discardFailedAttempt(socket: BluetoothSocket, attSocket: BluetoothSocket?) {
+        // The ATT socket is published before the AACP one; undo that if AACP never made it.
+        if (attSocket != null && BluetoothConnectionManager.attSocket === attSocket &&
+            BluetoothConnectionManager.aacpSocket !== socket
+        ) {
+            attManager.disconnected()
+            BluetoothConnectionManager.attSocket = null
+        }
+        closeUnusedSocket(socket)
+        closeUnusedSocket(attSocket)
     }
 
     /** Closes a socket from a failed attempt so it doesn't leak, unless it became the active one. */
@@ -3059,10 +3110,13 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
 //        isConnectedLocally = false
         aacpManager.disconnected()
 
+        // Before clearing the socket: updateNotificationContent() returns early without one,
+        // which left the "connected" notification up after a manual disconnect.
+        updateNotificationContent(false)
+        attManager.disconnected()
         BluetoothConnectionManager.aacpSocket = null
         BluetoothConnectionManager.attSocket = null
 
-        updateNotificationContent(false)
         sendBroadcast(Intent(AirPodsNotifications.AIRPODS_DISCONNECTED).apply {
             setPackage(packageName)
         })
@@ -3284,6 +3338,11 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
     @SuppressLint("MissingPermission")
     override fun onDestroy() {
         clearPacketLogs()
+        try {
+            unregisterReceiver(screenOnReceiver)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
         Log.d(TAG, "Service stopped is being destroyed for some reason!")
 
         sharedPreferences.unregisterOnSharedPreferenceChangeListener(this)

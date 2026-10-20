@@ -70,6 +70,9 @@ class BLEManager(private val context: Context) {
         val connectionState: String = "Unknown"
     )
 
+    /** Whether the case lid is currently known to be open. Main thread only. */
+    fun isLidOpen(): Boolean = currentGlobalLidState == true
+
     fun getMostRecentStatus(): AirPodsStatus? {
         return deviceStatusMap.values.maxByOrNull { it.lastSeen }
     }
@@ -107,9 +110,9 @@ class BLEManager(private val context: Context) {
     private var cachedDecryptCipher: Cipher? = null
 
     /**
-     * How hard we scan. Scanning is the main battery cost of this class, so we only use
-     * the fast mode while the screen is on and AirPods aren't connected, which is when
-     * the lid-open popup has to appear quickly.
+     * How hard we scan. Scanning is the main battery cost of this class, so the fast mode is
+     * only used while the screen is on, AirPods aren't connected, and they're likely to be
+     * picked up: right after the screen turns on, or while our AirPods were seen recently.
      */
     private enum class ScanProfile(
         val scanMode: Int,
@@ -117,9 +120,10 @@ class BLEManager(private val context: Context) {
         val lidCloseTimeoutMs: Long,
         val staleDeviceTimeoutMs: Long
     ) {
-        // Screen on, AirPods not connected.
+        // Screen on, AirPods not connected, and likely to be picked up soon.
         FAST(ScanSettings.SCAN_MODE_LOW_LATENCY, 500L, 2_500L, 15_000L),
-        // Screen on, AirPods connected. Battery and state come over the AACP socket instead.
+        // Screen on and AirPods connected (battery and state come over the AACP socket), or
+        // AirPods not seen for a while. Still catches a lid opening within a few seconds.
         BALANCED(ScanSettings.SCAN_MODE_BALANCED, 1_000L, 6_000L, 20_000L),
         // Screen off. The popup can't be seen, so a slow scan is enough. Devices are kept for
         // longer because results are sparse, and the incoming-call takeover reads the last
@@ -135,6 +139,12 @@ class BLEManager(private val context: Context) {
     // battery shown from the socket is replaced with fresh BLE data.
     private var reportNextStatus = false
     private var consecutiveScanFailures = 0
+
+    // When the screen last turned on and when our own AirPods were last heard (elapsedRealtime).
+    // Fast scanning only runs within a window after either.
+    private var screenOnAtMs = 0L
+    private var lastOwnAdvertAtMs = 0L
+    private val fastWindowRunnable = Runnable { applyDesiredProfile() }
     private val scanStartTimes = ArrayDeque<Long>()
     private val currentProfile: ScanProfile get() = activeProfile ?: ScanProfile.FAST
 
@@ -146,6 +156,7 @@ class BLEManager(private val context: Context) {
             when (intent?.action) {
                 Intent.ACTION_SCREEN_ON -> {
                     isScreenOn = true
+                    screenOnAtMs = SystemClock.elapsedRealtime()
                     // Switch right away so opening the case right after waking the phone still shows the popup quickly.
                     profileHandler.removeCallbacks(applyProfileRunnable)
                     applyDesiredProfile()
@@ -241,8 +252,27 @@ class BLEManager(private val context: Context) {
         return when {
             !isScreenOn -> ScanProfile.LOW_POWER
             linkUp -> ScanProfile.BALANCED
-            else -> ScanProfile.FAST
+            fastWindowRemainingMs() > 0 -> ScanProfile.FAST
+            // AirPods probably aren't around (at home, or with another device). Balanced still
+            // sees them within a few seconds, and seeing them switches back to fast.
+            else -> ScanProfile.BALANCED
         }
+    }
+
+    /** How much longer fast scanning is justified, or 0 if it isn't. */
+    private fun fastWindowRemainingMs(): Long {
+        val now = SystemClock.elapsedRealtime()
+        val afterScreenOn = if (screenOnAtMs > 0) screenOnAtMs + FAST_AFTER_SCREEN_ON_MS - now else 0L
+        val afterSeen = if (lastOwnAdvertAtMs > 0) lastOwnAdvertAtMs + FAST_AFTER_SEEN_MS - now else 0L
+        return maxOf(afterScreenOn, afterSeen, 0L)
+    }
+
+    /** Re-checks the profile when the fast window ends, so fast scanning doesn't outlive it. */
+    private fun scheduleFastWindowCheck(profile: ScanProfile?) {
+        profileHandler.removeCallbacks(fastWindowRunnable)
+        if (profile != ScanProfile.FAST) return
+        val remaining = fastWindowRemainingMs()
+        if (remaining > 0) profileHandler.postDelayed(fastWindowRunnable, remaining + 1_000L)
     }
 
     private fun hasScanPermission(): Boolean =
@@ -273,6 +303,7 @@ class BLEManager(private val context: Context) {
             }
             return
         }
+        scheduleFastWindowCheck(desired)
         if (desired == activeProfile && mScanCallback != null) return
 
         // Android fails scans (SCAN_FAILED_SCANNING_TOO_FREQUENTLY) for apps that start more
@@ -329,6 +360,7 @@ class BLEManager(private val context: Context) {
             scanningRequested = true
             consecutiveScanFailures = 0
             isScreenOn = context.getSystemService(PowerManager::class.java)?.isInteractive ?: true
+            if (isScreenOn) screenOnAtMs = SystemClock.elapsedRealtime()
             isAudioLinkConnected = BluetoothConnectionManager.aacpSocket?.isConnected == true
             registerStateReceiver()
             sharedPreferences.registerOnSharedPreferenceChangeListener(keyListener)
@@ -471,6 +503,7 @@ class BLEManager(private val context: Context) {
             profileHandler.removeCallbacks(applyProfileRunnable)
             unregisterStateReceiver()
             sharedPreferences.unregisterOnSharedPreferenceChangeListener(keyListener)
+            profileHandler.removeCallbacks(fastWindowRunnable)
             stopScanInternal()
         }
     }
@@ -560,6 +593,13 @@ class BLEManager(private val context: Context) {
                 if (verifiedAddresses.size >= MAX_VERIFIED_ADDRESSES) verifiedAddresses.clear()
                 verifiedAddresses.add(address)
                 Log.d(TAG, "RPA verified and added to trusted list: $address")
+            }
+
+            // Our AirPods are around: allow fast scanning again (popup latency matters now).
+            val wasOutsideFastWindow = fastWindowRemainingMs() == 0L
+            lastOwnAdvertAtMs = SystemClock.elapsedRealtime()
+            if (wasOutsideFastWindow && activeProfile == ScanProfile.BALANCED && isScreenOn) {
+                profileHandler.post { applyDesiredProfile() }
             }
 
             lastBroadcastTime = System.currentTimeMillis()
@@ -822,6 +862,9 @@ class BLEManager(private val context: Context) {
         private const val SCAN_RETRY_DELAY_MS = 30_000L
         private const val SCAN_QUICK_RETRY_DELAY_MS = 5_000L
         private const val SCAN_MAX_RETRY_DELAY_MS = 5 * 60_000L
+        // Fast scanning after the screen turns on, and after our AirPods were last heard.
+        private const val FAST_AFTER_SCREEN_ON_MS = 60_000L
+        private const val FAST_AFTER_SEEN_MS = 5 * 60_000L
         private const val SCAN_START_WINDOW_MS = 30_000L
         private const val MAX_SCAN_STARTS_PER_WINDOW = 4
         private const val MAX_REJECTED_ADDRESSES = 256

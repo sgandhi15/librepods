@@ -15,10 +15,13 @@ The app used to scan at full power (`SCAN_MODE_LOW_LATENCY`) all the time. It no
 | No IRK saved yet (AirPods never connected) | No scan | Every result is thrown away without the IRK anyway |
 | Screen off | Low power | The popup can't be seen |
 | Screen on, AirPods connected | Balanced | Battery and state come over the direct connection; the popup is still caught within a few seconds |
-| Screen on, not connected | Full speed | The lid-open popup must be fast |
+| Screen on, not connected, within 1 min of the screen turning on or 5 min of last hearing your AirPods | Full speed | The lid-open popup must be fast when the AirPods are likely to be picked up |
+| Screen on, not connected, otherwise | Balanced | Your AirPods probably aren't around (at home, or with another device). Balanced still hears them within a few seconds, and hearing them switches straight back to full speed |
+
+The trade-off: if the screen has been on for over a minute and your AirPods haven't been heard for 5 minutes (for example, in a closed case in a pocket), the first popup can take about 3–4 s instead of under 1 s.
 
 When the profile switches:
-- Switching to full speed happens immediately when the screen turns on.
+- Switching to full speed happens immediately when the screen turns on, or when your AirPods are heard while scanning at balanced.
 - Other switches wait first: 15 s after the screen turns off, 1 s for other events.
 - A limiter allows at most 4 scan starts per 30 s. Android fails scans (`SCAN_FAILED_SCANNING_TOO_FREQUENTLY`) for apps that start more than 5.
 
@@ -62,6 +65,13 @@ The address caches are size-limited and are cleared when the IRK changes.
 
 **Battery updates**
 - A BLE battery change no longer runs the battery/widget/metadata update twice.
+- A battery packet from the AirPods only updates metadata, the widget, the system battery broadcast and the notification when the values changed. The in-app `BATTERY_DATA` broadcast still goes out for every packet.
+- Audio is only connected or disconnected when "both pods charging" changes, instead of on every battery packet. Each call bound a profile proxy, and repeating it also undid deliberate audio disconnects, such as "disconnect when not wearing".
+
+**Other fixes**
+- If the lid opens while the screen is off, the popup is shown when the screen turns on. Before, it was shown in the dark, and since only one popup is shown per connection, you didn't get one at all.
+- A manual disconnect now cancels the "connected" notification and closes the ATT socket.
+- With the vendor-ID hook, the ATT socket is now set before its reader starts. Before, the reader stopped at once on a new connection and the first reads failed.
 
 ## Review findings
 
@@ -76,27 +86,18 @@ Claims checked and rejected:
 
 ## Ideas for later
 
-Each of these saves more battery but costs something, or is a separate bug.
+Each of these saves more battery but costs a feature, so they were left out.
 
-1. **Full-speed scanning while the screen is on and the AirPods aren't around.** This is now the largest remaining scan cost (for example, AirPods at home, or connected to a Mac).
-   - Best version (suggested by reviewers): scan fast for a while after the screen turns on or after your AirPods were last seen, otherwise use balanced.
-   - *Cost:* the first popup after they come back can take about 3–4 s.
-2. **Low power instead of balanced while connected with the screen on.** Almost nothing uses BLE then except the lid popup.
+1. **Low power instead of balanced while connected with the screen on.** Almost nothing uses BLE then except the lid popup.
    - *Cost:* the popup when putting the AirPods away is about 5 s slower.
-3. **Respect the "take over when disconnected" setting in the BLE takeover path.**
-   - Today `takeOverFromBle()` ignores it. The setting is off by default, and the old code ignored it too.
-   - *Cost:* users on default settings would stop getting this automatic connect.
-4. **Skip `updateBattery()` when a battery packet from the socket has the same values as before.** It does metadata writes, a widget update and broadcasts each time.
-   - Check first that the popup and island don't rely on a `BATTERY_DATA` broadcast for every packet.
-5. **`connectAudio`/`disconnectAudio` runs on every battery packet,** binding a profile proxy and using reflection each time. Only call them when the charging state changes.
-6. **Stop running a permanent foreground service.** Android's Companion Device Manager (`startObservingDevicePresence` / `CompanionDeviceService`) could wake the app only when the AirPods are around.
+2. **Respect the "take over when disconnected" setting in the BLE takeover path.**
+   - `takeOverFromBle()` ignores it, as the old code did. The setting is off by default, is premium-only, and today controls the music/call takeover (`takeOver()`).
+   - *Cost:* free users would lose the automatic connect with no way to turn it back on.
+3. **Stop running a permanent foreground service.** Android's Companion Device Manager (`startObservingDevicePresence` / `CompanionDeviceService`) could wake the app only when the AirPods are around.
    - *Cost:* a large rewrite and an association step. It's unclear whether it works with AirPods' rotating addresses, so prototype it first.
 
-Bugs that already existed, found during review and not fixed here:
-- `disconnectAirPods()` clears the socket before calling `updateNotificationContent(false)`, so the "connected" notification isn't cancelled on a manual disconnect.
-- If the lid opens while the screen is off, the low-power scan can fire the popup in the dark, where it auto-closes before anyone sees it.
-- With the vendor-ID hook enabled, `connectToSocket` calls `attManager.startReader()` and `readCharacteristic()` before `BluetoothConnectionManager.attSocket` is assigned. On a fresh connection the reader stops at once and the reads return null.
-- `withTimeout(5000)` inside `runBlocking` in `connectToSocketLocked` can't fire, because the block never suspends, so a slow `connect()` isn't cut off at 5 s. With the vendor-ID hook, each attempt also waits about 6 s on the three ATT reads to the dead reader.
+Bugs that already existed and aren't fixed here:
+- `withTimeout(5000)` inside `runBlocking` in `connectToSocketLocked` can't fire, because the block never suspends, so a slow `connect()` isn't cut off at 5 s. Making it work means aborting `connect()` (closing the socket from a timer), which could cut off slow but successful connections, so it's left as is.
 
 Side effects of this branch:
 - After Bluetooth is turned back on with the case open, the popup shows again, because tracked lid state is reset when scanning stops. On `main` the scan never restarted after a Bluetooth toggle at all, so BLE features stopped working until the service restarted.
