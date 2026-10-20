@@ -65,7 +65,7 @@ The address caches are size-limited and are cleared when the IRK changes.
 
 ## Review findings
 
-In October 2026, 12 independent reviews checked this work: Claude Opus 5.5 and Fable 5.1, Codex GPT-6-Astra and GPT-6.1-Sol, and 8 free OpenCode models. Nemotron 3 Ultra failed to run. Claude Opus and GPT-6.1-Sol then ran two verification rounds on the fixes. Every confirmed issue above is fixed.
+In October 2026, 12 independent reviews checked this work: Claude Opus 5.5 and Fable 5.1, Codex GPT-6-Astra and GPT-6.1-Sol, and 8 free OpenCode models. Nemotron 3 Ultra failed to run. Claude Opus and GPT-6.1-Sol then ran two verification rounds on the fixes, and a final full review by Claude Fable 5.1 found it ready to merge, with only small cleanups, which are done. Every confirmed issue above is fixed.
 
 Claims checked and rejected:
 - **"`RECEIVER_NOT_EXPORTED` blocks the Bluetooth and screen broadcasts."** No. They come from system_server, which can deliver to non-exported receivers.
@@ -96,7 +96,10 @@ Bugs that already existed, found during review and not fixed here:
 - `disconnectAirPods()` clears the socket before calling `updateNotificationContent(false)`, so the "connected" notification isn't cancelled on a manual disconnect.
 - If the lid opens while the screen is off, the low-power scan can fire the popup in the dark, where it auto-closes before anyone sees it.
 - With the vendor-ID hook enabled, `connectToSocket` calls `attManager.startReader()` and `readCharacteristic()` before `BluetoothConnectionManager.attSocket` is assigned. On a fresh connection the reader stops at once and the reads return null.
-- After Bluetooth is turned back on with the case open, the popup shows again, because tracked lid state is reset when scanning stops.
+- `withTimeout(5000)` inside `runBlocking` in `connectToSocketLocked` can't fire, because the block never suspends, so a slow `connect()` isn't cut off at 5 s. With the vendor-ID hook, each attempt also waits about 6 s on the three ATT reads to the dead reader.
+
+Side effects of this branch:
+- After Bluetooth is turned back on with the case open, the popup shows again, because tracked lid state is reset when scanning stops. On `main` the scan never restarted after a Bluetooth toggle at all, so BLE features stopped working until the service restarted.
 
 ## Measuring
 

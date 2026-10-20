@@ -164,6 +164,11 @@ class BLEManager(private val context: Context) {
                     reportNextStatus = false
                 }
                 AirPodsNotifications.AIRPODS_DISCONNECTED -> {
+                    // Same check as the service: ignore a late disconnect from an older socket.
+                    if (BluetoothConnectionManager.isStaleDisconnect(
+                            intent.getIntExtra(AirPodsNotifications.EXTRA_SOCKET_ID, 0)
+                        )
+                    ) return
                     isAudioLinkConnected = false
                     reportNextStatus = true
                 }
