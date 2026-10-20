@@ -72,7 +72,7 @@ The address caches are size-limited and are cleared when the IRK changes.
 - If HFP reconnects while the socket stays up, the battery is republished, because Android clears a headset's battery when HFP disconnects.
 
 **Other fixes**
-- If the lid opens while the popup can't be seen (screen off, or on the lock screen, which covers overlays), the popup is shown once the phone is on and unlocked. Before, it was shown where nobody could see it, and since only one popup is shown per connection, you didn't get one at all.
+- If the lid opens while the popup can't be seen (screen off, or on the lock screen, which covers overlays), the popup is shown once the phone is on and unlocked, if that happens within a minute. Before, it was shown where nobody could see it, and since only one popup is shown per connection, you didn't get one at all.
 - A manual disconnect now cancels the "connected" notification and closes the ATT socket.
 - With the vendor-ID hook, the ATT socket is now set before its reader starts. Before, the reader stopped at once on a new connection and the first reads failed.
 
@@ -100,6 +100,7 @@ Each of these saves more battery but costs a feature, so they were left out.
    - *Cost:* a large rewrite and an association step. It's unclear whether it works with AirPods' rotating addresses, so prototype it first.
 
 Bugs that already existed and aren't fixed here:
+- "Reconnect" after a reverse can call `connectAudio` twice: once inside `takeOver()` and once explicitly. That's harmless, apart from an extra profile bind.
 - `withTimeout(5000)` inside `runBlocking` in `connectToSocketLocked` can't fire, because the block never suspends, so a slow `connect()` isn't cut off at 5 s. Making it work means aborting `connect()` (closing the socket from a timer), which could cut off slow but successful connections, so it's left as is.
 
 Side effects of this branch:
