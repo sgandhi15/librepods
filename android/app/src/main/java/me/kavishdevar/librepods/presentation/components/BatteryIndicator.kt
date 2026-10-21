@@ -66,6 +66,7 @@ fun BatteryIndicator(
     status: Int,
     prefix: String = "",
     previousCharging: Boolean = false,
+    background: Color = MaterialTheme.colorScheme.surfaceContainer
 ) {
     val isDarkTheme = isSystemInDarkTheme()
     val batteryTextColor = if (isDarkTheme) Color.White else Color.Black
@@ -83,7 +84,7 @@ fun BatteryIndicator(
     }
 
     Column(
-        modifier = Modifier.background(MaterialTheme.colorScheme.surfaceContainer).padding(4.dp), // just for haze to work
+        modifier = Modifier.background(background).padding(4.dp), // just for haze to work
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(

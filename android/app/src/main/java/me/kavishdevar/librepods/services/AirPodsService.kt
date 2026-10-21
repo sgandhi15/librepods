@@ -1519,7 +1519,13 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
             return
         }
         val popupWindow = PopupWindow(service.applicationContext)
-        popupWindow.open(name, batteryNotification)
+        val model = airpodsInstance?.model
+        popupWindow.open(
+            name,
+            batteryNotification,
+            budsRes = model?.budsRes ?: R.drawable.airpods_pro_2_buds,
+            caseRes = model?.caseRes ?: R.drawable.airpods_pro_2_case
+        )
         popupShown = true
     }
 

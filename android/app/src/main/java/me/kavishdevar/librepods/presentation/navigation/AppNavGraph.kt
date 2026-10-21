@@ -5,6 +5,9 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
+import me.kavishdevar.librepods.presentation.components.AboutCard
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation3.runtime.NavEntry
@@ -84,7 +87,6 @@ fun AppNavGraph(
                                 navigateToEqualizer = { navigate(Screen.Equalizer) },
                                 navigateToHeadTracking = { navigate(Screen.HeadTracking) },
                                 navigateToAccessibility = { navigate(Screen.Accessibility) },
-                                navigateToVersion = { navigate(Screen.VersionInfo) },
                                 navigateToCallControlScreen = { navigate(Screen.CallControl(it)) },
                                 navigateToMicrophoneSettings = { navigate(Screen.MicrophoneSettings) },
                             )
@@ -99,9 +101,22 @@ fun AppNavGraph(
                     Screen.AppSettings ->
                         NavEntry(screen) {
                             val vm: AppSettingsViewModel = viewModel()
+                            val airPodsState by airPodsViewModel.uiState.collectAsState()
                             AppSettingsScreen(
                                 viewModel = vm,
-                                navigateToReleaseNotesScreen = { navigate(Screen.ReleaseNotes) }
+                                navigateToReleaseNotesScreen = { navigate(Screen.ReleaseNotes) },
+                                airPodsDetails = if (airPodsState.isLocallyConnected && airPodsState.serialNumbers.size >= 3) {
+                                    {
+                                        AboutCard(
+                                            modelName = airPodsState.modelName,
+                                            actualModel = airPodsState.actualModel,
+                                            serialNumbers = airPodsState.serialNumbers,
+                                            version = airPodsState.version3,
+                                            navigateToVersion = { navigate(Screen.VersionInfo) },
+                                            title = airPodsState.deviceName
+                                        )
+                                    }
+                                } else null
                             )
                         }
 

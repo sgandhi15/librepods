@@ -36,6 +36,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,7 +57,8 @@ import kotlin.io.encoding.ExperimentalEncodingApi
 fun BatteryView(
     batteryList: List<Battery>,
     budsRes: Int,
-    caseRes: Int
+    caseRes: Int,
+    indicatorBackground: Color = MaterialTheme.colorScheme.surfaceContainer
 ) {
     val left = batteryList.find { it.component == BatteryComponent.LEFT }
     val right = batteryList.find { it.component == BatteryComponent.RIGHT }
@@ -106,7 +108,8 @@ fun BatteryView(
                     if (isSingleDisplay) {
                         BatteryIndicator(
                             leftLevel.coerceAtMost(rightLevel),
-                            left?.status ?: BatteryStatus.NOT_CHARGING
+                            left?.status ?: BatteryStatus.NOT_CHARGING,
+                            background = indicatorBackground
                         )
                     } else {
                         Row(
@@ -117,7 +120,8 @@ fun BatteryView(
                                 BatteryIndicator(
                                     leftLevel,
                                     left?.status ?: BatteryStatus.NOT_CHARGING,
-                                    "\uDBC6\uDCE5"
+                                    "\uDBC6\uDCE5",
+                                    background = indicatorBackground
                                 )
                             }
 
@@ -129,7 +133,8 @@ fun BatteryView(
                                 BatteryIndicator(
                                     rightLevel,
                                     right?.status ?: BatteryStatus.NOT_CHARGING,
-                                    "\uDBC6\uDCE8"
+                                    "\uDBC6\uDCE8",
+                                    background = indicatorBackground
                                 )
                             }
                         }
@@ -165,7 +170,8 @@ fun BatteryView(
                         BatteryIndicator(
                             caseLevel,
                             case?.status ?: BatteryStatus.NOT_CHARGING,
-                            prefix = if (!isSingleDisplay) "\uDBC3\uDE6C" else ""
+                            prefix = if (!isSingleDisplay) "\uDBC3\uDE6C" else "",
+                            background = indicatorBackground
                         )
                     }
                 }

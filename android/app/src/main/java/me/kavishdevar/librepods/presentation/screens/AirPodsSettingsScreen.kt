@@ -84,7 +84,6 @@ import me.kavishdevar.librepods.R
 import me.kavishdevar.librepods.bluetooth.AACPManager
 import me.kavishdevar.librepods.data.AirPodsPro3
 import me.kavishdevar.librepods.data.Capability
-import me.kavishdevar.librepods.presentation.components.AboutCard
 import me.kavishdevar.librepods.presentation.components.AudioSettings
 import me.kavishdevar.librepods.presentation.components.BatteryView
 import me.kavishdevar.librepods.presentation.components.CallControlSettings
@@ -114,7 +113,6 @@ fun AirPodsSettingsRoute(
     navigateToEqualizer: () -> Unit,
     navigateToHeadTracking: () -> Unit,
     navigateToAccessibility: () -> Unit,
-    navigateToVersion: () -> Unit,
     navigateToCallControlScreen: (action: String) -> Unit,
     navigateToMicrophoneSettings: () -> Unit
 ) {
@@ -154,7 +152,6 @@ fun AirPodsSettingsRoute(
             navigateToEqualizer = navigateToEqualizer,
             navigateToHeadTracking = navigateToHeadTracking,
             navigateToAccessibility = navigateToAccessibility,
-            navigateToVersion = navigateToVersion,
             navigateToCallControlScreen = navigateToCallControlScreen,
             navigateToMicrophoneSettings = navigateToMicrophoneSettings,
 
@@ -192,7 +189,6 @@ fun AirPodsSettingsScreen(
         navigateToEqualizer: () -> Unit,
         navigateToHeadTracking: () -> Unit,
         navigateToAccessibility: () -> Unit,
-        navigateToVersion: () -> Unit,
         navigateToCallControlScreen: (action: String) -> Unit,
         navigateToMicrophoneSettings: () -> Unit,
 
@@ -445,17 +441,6 @@ fun AirPodsSettingsScreen(
                 }
             }
 
-            item(key = "spacer_about") { Spacer(modifier = Modifier.height(32.dp)) }
-            item(key = "about") {
-                AboutCard(
-                    modelName = state.modelName,
-                    actualModel = state.actualModel,
-                    serialNumbers = state.serialNumbers,
-                    version = state.version3,
-                    navigateToVersion = navigateToVersion
-                )
-            }
-
             item(key = "spacer_disconnect") { Spacer(modifier = Modifier.height(28.dp)) }
             item(key = "disconnect_button") {
                 StyledButton(
@@ -601,7 +586,6 @@ fun AirPodsSettingsScreenPreviewApple() {
                 navigateToEqualizer = {},
                 navigateToHeadTracking = {},
                 navigateToAccessibility = {},
-                navigateToVersion = {},
                 navigateToCallControlScreen = {},
                 navigateToMicrophoneSettings = {},
 

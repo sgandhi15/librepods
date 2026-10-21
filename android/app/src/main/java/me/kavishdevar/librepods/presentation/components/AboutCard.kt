@@ -33,7 +33,8 @@ fun AboutCard(
     actualModel: String,
     serialNumbers: List<String>,
     version: String?,
-    navigateToVersion: () -> Unit
+    navigateToVersion: () -> Unit,
+    title: String = stringResource(R.string.about)
 ) {
     val serialNumbers = listOf(
         serialNumbers[0],
@@ -43,7 +44,7 @@ fun AboutCard(
 
     val serialNumber = remember { mutableIntStateOf(0) }
 
-    StyledList (title = stringResource(R.string.about)) {
+    StyledList (title = title) {
         StyledListItem(
             name = stringResource(R.string.model_name),
             description = modelName

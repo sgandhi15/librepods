@@ -98,7 +98,8 @@ import java.util.concurrent.TimeUnit
 @Composable
 fun AppSettingsScreen(
     viewModel: AppSettingsViewModel = viewModel(),
-    navigateToReleaseNotesScreen: () -> Unit
+    navigateToReleaseNotesScreen: () -> Unit,
+    airPodsDetails: (@Composable () -> Unit)? = null
 ) {
     val context = LocalContext.current
     val scrollState = rememberScrollState()
@@ -313,6 +314,10 @@ fun AppSettingsScreen(
         }
 
         Spacer(modifier = Modifier.height(20.dp))
+        airPodsDetails?.let {
+            it()
+            Spacer(modifier = Modifier.height(16.dp))
+        }
         DeviceInfoCard()
         Spacer(modifier = Modifier.height(16.dp))
         AppInfoCard(navigateToReleaseNotesScreen)
