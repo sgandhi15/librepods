@@ -124,6 +124,39 @@ Notes:
 - Android splits Bluetooth scan blame between every app scanning at the same time. Here that was Google Play services and a system service, which also scanned non-stop, plus some Samsung services part of the time.
 - The phone's total Bluetooth drain was 31.5 mAh. The radio runs at the most aggressive mode any app asks for, so LibrePods' full-speed scan probably set the pace. Its real cost is somewhere between its blamed 5 mAh and most of that 31.5 mAh.
 
+## Results (this branch at 8b79a3a)
+
+Measured on the same phone, 2026-10-19 to 2026-10-21, with the side-by-side debug build.
+
+**Scan modes over the whole ~27 h**, from `dumpsys bluetooth_manager`, which isn't reset by charging:
+
+| Mode | Time | Share |
+|---|---|---|
+| Low power | 16 h 43 min | 62% |
+| Balanced | 8 h 9 min | 30% |
+| Full speed | 1 h 56 min | 7% |
+
+Release 1.0.4 scanned at full speed 100% of the time; the same dump shows its earlier runs on this phone. The Bluetooth stack's own cost score weights the modes by how much of the time the radio listens (10%, 25%, 100%). By that score, LibrePods' scanning cost dropped by **79%**.
+
+**Battery stats**, which only cover the 11 h since the last charge:
+
+| What, per hour on battery | 1.0.4 | This branch | Change |
+|---|---|---|---|
+| Estimated power use | 1.70 mAh | 0.70 mAh | −59% |
+| Same, without screen time from having the app open | 1.02 mAh | 0.70 mAh | −31% |
+| Bluetooth power blamed | 0.91 mAh | 0.65 mAh | −29% |
+| CPU time | 1.09 s | 0.95 s | −13% |
+| Notification posts | 47 | 6 | −86% |
+
+Over those 11 h, LibrePods was 0.46% of the phone's drain, 20th of all apps. Before, it was 0.8% and 14th.
+
+Why the blamed Bluetooth figure falls less than the scan cost: Android blames scanning by how long an app scans, not how hard, and splits it between the apps scanning at the same time. Google Play services and Samsung's `mdx.kit` scan non-stop, mostly at low power. So a low-power scan is blamed about as much as a full-speed one. The real gain is that the radio no longer runs at full speed all day just for LibrePods.
+
+Caveats:
+- The usage wasn't the same in both runs.
+- The test build is a debug build, so its CPU figure is slightly pessimistic.
+- Raw files are in `~/librepods-battery-measurements/branch-8b79a3a/`.
+
 ## Measuring
 
 Battery stats work on the release build; no debug build is needed.
