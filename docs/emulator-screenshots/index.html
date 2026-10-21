@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>LibrePods · real emulator screenshots</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: system-ui, sans-serif;
+        background: #16191e;
+        color: #e9edf1;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 32px;
+        max-width: 1800px;
+        margin-inline: auto;
+      }
+      h1 {
+        font-size: 28px;
+        font-weight: 550;
+        letter-spacing: -0.7px;
+        margin-bottom: 12px;
+      }
+      p {
+        color: #b2bac5;
+        max-width: 1000px;
+        line-height: 1.6;
+        font-size: 14px;
+      }
+      a {
+        color: #a8d6c8;
+      }
+      .toolbar {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        padding: 20px 0;
+        position: sticky;
+        top: 0;
+        background: #16191ef5;
+        z-index: 1;
+      }
+      input,
+      select {
+        font: inherit;
+        color: inherit;
+        background: #242a32;
+        border: 1px solid #444c56;
+        border-radius: 8px;
+        padding: 12px;
+      }
+      input {
+        flex: 1;
+        min-width: 200px;
+      }
+      #count {
+        font-size: 12px;
+        margin: 8px 0 25px;
+      }
+      #gallery {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(235px, 1fr));
+        gap: 30px 24px;
+      }
+      figure {
+        margin: 0;
+        min-width: 0;
+      }
+      img {
+        width: 100%;
+        height: auto;
+        display: block;
+        border-radius: 12px;
+        border: 1px solid #414751;
+        background: #000;
+      }
+      figcaption {
+        padding: 12px 0;
+        font-size: 13px;
+        line-height: 1.6;
+      }
+      small {
+        color: #a6aebb;
+        display: block;
+        font-size: 11px;
+      }
+      .label {
+        color: #a8d6c8;
+        font:
+          10px ui-monospace,
+          monospace;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      #empty {
+        display: none;
+      }
+      footer {
+        margin: 40px 0;
+        border-top: 1px solid #444c56;
+        padding-top: 20px;
+        color: #a6aebb;
+        font-size: 12px;
+      }
+      @media (max-width: 600px) {
+        body {
+          padding: 18px;
+        }
+        #gallery {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 20px 12px;
+        }
+        h1 {
+          font-size: 24px;
+        }
+      }
+    </style>
+    <script defer src="catalog.js"></script>
+  </head>
+  <body>
+    <h1>LibrePods. Real emulator captures.</h1>
+    <p>
+      Native Android UI, captured directly from the emulator framebuffer. These
+      are PNG screenshots, not HTML recreations. Device-dependent screens use
+      the app's built-in AirPods demo data. The debug launcher selects a
+      destination; the existing Compose screens, navigation, fonts and controls
+      do the rendering.
+    </p>
+    <p>
+      Long pages have several numbered scroll positions. Open any image for its
+      original resolution. Linux is not an Android app and is not included here.
+      <a href="README.md">Capture details and instructions</a>
+    </p>
+    <div class="toolbar">
+      <input
+        id="search"
+        type="search"
+        placeholder="Find a screen or route…"
+        aria-label="Find a screen"
+      /><select id="variant" aria-label="Theme">
+        <option value="all">All themes</option></select
+      ><select id="position" aria-label="Scroll position">
+        <option value="all">All scroll positions</option>
+        <option value="first">First position only</option>
+      </select>
+    </div>
+    <p id="count" role="status"></p>
+    <div id="gallery"></div>
+    <p id="empty">No matching screenshots.</p>
+    <footer id="metadata"></footer>
+    <script>
+      window.addEventListener("DOMContentLoaded", () => {
+        const data = window.NATIVE_CAPTURES;
+        if (!data) {
+          document.getElementById("count").textContent =
+            "No capture catalog yet. Run capture.py first.";
+          return;
+        }
+        const esc = (s) =>
+          String(s ?? "").replace(
+            /[&<>"']/g,
+            (c) =>
+              ({
+                "&": "&amp;",
+                "<": "&lt;",
+                ">": "&gt;",
+                '"': "&quot;",
+                "'": "&#39;",
+              })[c],
+          );
+        const title = (id) => id.split("-").join(" ");
+        const variants = [...new Set(data.captures.map((x) => x.variant))];
+        const filter = document.getElementById("variant");
+        variants.forEach((v) => filter.add(new Option(title(v), v)));
+        const render = () => {
+          const normalize = (value) =>
+            value
+              .replace(/([a-z])([A-Z])/g, "$1 $2")
+              .replace(/[-_]/g, " ")
+              .toLowerCase();
+          const query = normalize(
+            document.getElementById("search").value,
+          ).trim();
+          const first = document.getElementById("position").value === "first";
+          const items = data.captures.filter(
+            (x) =>
+              (filter.value === "all" || x.variant === filter.value) &&
+              (!first || x.position === 1) &&
+              normalize(`${x.scene} ${x.route || ""}`).includes(query),
+          );
+          document.getElementById("count").textContent =
+            `${items.length} of ${data.captures.length} real screenshots · ${new Set(data.captures.map((x) => x.route).filter(Boolean)).size} Android routes covered`;
+          document.getElementById("gallery").innerHTML = items
+            .map(
+              (x) =>
+                `<figure><a href="${esc(x.file)}" target="_blank" rel="noopener"><img loading="lazy" src="${esc(x.file)}" width="${x.width}" height="${x.height}" alt="${esc(title(x.scene))}, ${esc(x.variant)}, scroll position ${x.position}"></a><figcaption><span class="label">${esc(x.variant)} · ${String(x.position).padStart(2, "0")}</span><br>${esc(title(x.scene))}<small>${esc(x.route || "App surface")} · ${x.width} × ${x.height}<br>${esc(x.data)}</small>${x.note ? `<small>${esc(x.note)}</small>` : ""}</figcaption></figure>`,
+            )
+            .join("");
+          document.getElementById("empty").style.display = items.length
+            ? "none"
+            : "block";
+        };
+        document.getElementById("search").addEventListener("input", render);
+        filter.addEventListener("change", render);
+        document.getElementById("position").addEventListener("change", render);
+        document.getElementById("metadata").textContent =
+          `${data.avd} · Android API ${data.api} · ${data.method}`;
+        render();
+      });
+    </script>
+  </body>
+</html>

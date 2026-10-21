@@ -31,15 +31,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SegmentedListItem
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -62,9 +57,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import me.kavishdevar.librepods.R
-import me.kavishdevar.librepods.presentation.theme.DesignSystem
 import me.kavishdevar.librepods.presentation.theme.LibrePodsTheme
-import me.kavishdevar.librepods.presentation.theme.LocalDesignSystem
 import me.kavishdevar.librepods.presentation.theme.sectionHeader
 import kotlin.io.encoding.ExperimentalEncodingApi
 
@@ -75,21 +68,19 @@ fun StyledToggle(
     description: String? = null,
     checked: Boolean = false,
     enabled: Boolean = true,
-    onCheckedChange: (Boolean) -> Unit,
-    header: Boolean = false
+    onCheckedChange: (Boolean) -> Unit
 ) {
-    val m3eEnabled = LocalDesignSystem.current == DesignSystem.Material
     Column(modifier = Modifier.padding(vertical = 12.dp)) {
         title?.let {
             Box(
                 modifier = Modifier
-                    .background(if (m3eEnabled) Color.Transparent else MaterialTheme.colorScheme.surfaceContainer)
+                    .background(MaterialTheme.colorScheme.surfaceContainer)
                     .padding(horizontal = 16.dp)
-                    .padding(top = 4.dp, bottom = if (m3eEnabled) 12.dp else 4.dp)
+                    .padding(top = 4.dp, bottom = 4.dp)
             ) {
                 Text(
                     text = it,
-                    color = if (m3eEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.sectionHeader,
+                    color = MaterialTheme.colorScheme.sectionHeader,
                     style = MaterialTheme.typography.labelSmallEmphasized
                 )
             }
@@ -98,34 +89,21 @@ fun StyledToggle(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(
-                    if (m3eEnabled) if (header) MaterialTheme.colorScheme.primaryContainer else Color.Transparent else MaterialTheme.colorScheme.surface,
-                    RoundedCornerShape(if (m3eEnabled) (if (header) 64.dp else 16.dp) else 28.dp)
+                    MaterialTheme.colorScheme.surface,
+                    RoundedCornerShape(28.dp)
                 )
-                .clip(RoundedCornerShape(if (m3eEnabled) (if (header) 64.dp else 16.dp) else 28.dp))
+                .clip(RoundedCornerShape(28.dp))
         ) {
-            if (m3eEnabled) {
-                StyledToggleContent(
-                    label = label,
-                    description = description,
-                    checked = checked,
-                    enabled = enabled,
-                    onCheckedChange = onCheckedChange,
-                    index = 0,
-                    count = 1,
-                    header = header
-                )
-            } else {
-                StyledToggleContent(
-                    label = label,
-                    checked = checked,
-                    enabled = enabled,
-                    onCheckedChange = onCheckedChange,
-                    index = 0,
-                    count = 1
-                )
-            }
+            StyledToggleContent(
+                label = label,
+                checked = checked,
+                enabled = enabled,
+                onCheckedChange = onCheckedChange,
+                index = 0,
+                count = 1
+            )
         }
-        if (description != null && !m3eEnabled) {
+        if (description != null) {
             Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = description, style = TextStyle(
@@ -159,7 +137,6 @@ fun StyledListScope.StyledToggle(
     }
 }
 
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun StyledToggleContent(
     label: String,
@@ -168,8 +145,7 @@ private fun StyledToggleContent(
     enabled: Boolean = true,
     onCheckedChange: (Boolean) -> Unit,
     index: Int,
-    count: Int,
-    header: Boolean = false
+    count: Int
 ) {
     val currentChecked by rememberUpdatedState(checked)
 
@@ -179,149 +155,74 @@ private fun StyledToggleContent(
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
 
-    val m3eEnabled = LocalDesignSystem.current == DesignSystem.Material
-
-    if (m3eEnabled) {
-        val defaultShape = when {
-            count == 1 -> RoundedCornerShape(24.dp)
-
-            index == 0 -> RoundedCornerShape(
-                topStart = 24.dp,
-                topEnd = 24.dp,
-                bottomStart = 8.dp,
-                bottomEnd = 8.dp
-            )
-
-            index == count - 1 -> RoundedCornerShape(
-                topStart = 8.dp,
-                topEnd = 8.dp,
-                bottomStart = 24.dp,
-                bottomEnd = 24.dp
-            )
-
-            else -> RoundedCornerShape(8.dp)
-        }
-        Column {
-            SegmentedListItem(
-                shapes = ListItemDefaults.shapes().copy(
-                    shape = defaultShape,
-                    pressedShape = RoundedCornerShape(24.dp),
-                    selectedShape = RoundedCornerShape(24.dp),
-                    hoveredShape = RoundedCornerShape(24.dp),
-                ),
-                onClick = { onCheckedChange(!currentChecked) },
-                trailingContent = {
-                    Switch(
-                        checked = currentChecked,
-                        onCheckedChange = onCheckedChange,
-                        modifier = Modifier.padding(end = if (header) 8.dp else 0.dp),
-                        enabled = enabled
-                    )
-                },
-                supportingContent = description?.let {
-                    {
-                        Text(
-                            text = it,
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier
-                                .padding(top = if (header) 2.dp else 4.dp, bottom = if (header) 8.dp else 4.dp)
-                                .padding(horizontal = if (header) 8.dp else 0.dp),
-                            color = if (header && enabled) MaterialTheme.colorScheme.onPrimaryContainer else Color.Unspecified
-                        )
-                    }
-                },
-                content = {
-                    Text(
-                        text = label,
-                        style = MaterialTheme.typography.labelMediumEmphasized,
-                        modifier = Modifier
-                            .padding(
-                                top = if (header) 8.dp else 4.dp,
-                                bottom = if (header) 2.dp else 4.dp
-                            )
-                            .padding(horizontal = if (header) 8.dp else 0.dp),
-                        color = if (header && enabled) MaterialTheme.colorScheme.onPrimaryContainer else Color.Unspecified
-                    )
-                },
-                enabled = enabled,
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.heightIn(min = 64.dp),
-                colors = if (header) ListItemDefaults.segmentedColors(containerColor = MaterialTheme.colorScheme.primaryContainer) else ListItemDefaults.segmentedColors()
-            )
-            if (index+1 != count) {
-                Spacer(modifier = Modifier.height(2.dp))
-            }
-        }
-    } else {
-        val isPressed = remember { mutableStateOf(false) }
-        Column {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(
-                        shape = RoundedCornerShape(28.dp),
-                        color = if (isPressed.value) Color(0xFFE0E0E0) else Color.Transparent
-                    )
-                    .padding(16.dp)
-                    .pointerInput(Unit) {
-                        detectTapGestures(
-                            onPress = {
-                                isPressed.value = true
-                                tryAwaitRelease()
-                                isPressed.value = false
-                            }
-                        )
-                    }
-                    .clickable(
-                        indication = null,
-                        interactionSource = remember { MutableInteractionSource() }
-                    ) {
-                        if (enabled) {
-                            scope.launch { haptics.performHapticFeedback(if (!currentChecked) HapticFeedbackType.ToggleOn else HapticFeedbackType.ToggleOff) }
-                            onCheckedChange(!currentChecked)
+    val isPressed = remember { mutableStateOf(false) }
+    Column {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    shape = RoundedCornerShape(28.dp),
+                    color = if (isPressed.value) Color(0xFFE0E0E0) else Color.Transparent
+                )
+                .padding(16.dp)
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                        onPress = {
+                            isPressed.value = true
+                            tryAwaitRelease()
+                            isPressed.value = false
                         }
-                    },
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(end = 4.dp)
-                ) {
-                    Text(
-                        text = label,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = textColor,
                     )
+                }
+                .clickable(
+                    indication = null,
+                    interactionSource = remember { MutableInteractionSource() }
+                ) {
+                    if (enabled) {
+                        scope.launch { haptics.performHapticFeedback(if (!currentChecked) HapticFeedbackType.ToggleOn else HapticFeedbackType.ToggleOff) }
+                        onCheckedChange(!currentChecked)
+                    }
+                },
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 4.dp)
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = textColor,
+                )
 
-                    if (description != null) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = description,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = textColor.copy(0.8f)
-                        )
+                if (description != null) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = textColor.copy(0.8f)
+                    )
+                }
+            }
+
+            StyledSwitch(
+                checked = checked,
+                enabled = enabled,
+                onCheckedChange = {
+                    if (enabled) {
+                        onCheckedChange(it)
                     }
                 }
-
-                StyledSwitch(
-                    checked = checked,
-                    enabled = enabled,
-                    onCheckedChange = {
-                        if (enabled) {
-                            onCheckedChange(it)
-                        }
-                    }
-                )
-            }
-            if (index+1 != count) {
-                HorizontalDivider(
-                    thickness = 1.dp,
-                    color = Color(0x40888888),
-                    modifier = Modifier
-                        .padding(start = 12.dp,end = 12.dp)
-                )
-            }
+            )
+        }
+        if (index+1 != count) {
+            HorizontalDivider(
+                thickness = 1.dp,
+                color = Color(0x40888888),
+                modifier = Modifier
+                    .padding(start = 12.dp,end = 12.dp)
+            )
         }
     }
 }
@@ -330,7 +231,7 @@ private fun StyledToggleContent(
 @Composable
 fun StyledToggleAppleListPreview() {
     val checked = remember { mutableStateOf(false) }
-    LibrePodsTheme(m3eEnabled = false) {
+    LibrePodsTheme {
         StyledList {
             StyledToggle(
                 label = "Apple Styled List",
@@ -346,39 +247,9 @@ fun StyledToggleAppleListPreview() {
 @Composable
 fun StyledToggleApplePreview() {
     val checked = remember { mutableStateOf(false) }
-    LibrePodsTheme(m3eEnabled = false) {
+    LibrePodsTheme {
         StyledToggle(
             label = "Apple",
-            description = "This is an example description for the styled toggle.",
-            checked = checked.value,
-            onCheckedChange = { checked.value = !checked.value }
-        )
-    }
-}
-
-@Preview(name = "List", group = "Apple")
-@Composable
-fun StyledToggleM3EListPreview() {
-    val checked = remember { mutableStateOf(false) }
-    LibrePodsTheme(m3eEnabled = true) {
-        StyledList {
-            StyledToggle(
-                label = "Apple Styled List",
-//                description = "This is an example description for the styled toggle.",
-                checked = checked.value,
-                onCheckedChange = { checked.value = !checked.value }
-            )
-        }
-    }
-}
-
-@Preview(name = "Normal", group = "Material")
-@Composable
-fun StyledToggleM3EPreview() {
-    val checked = remember { mutableStateOf(false) }
-    LibrePodsTheme(m3eEnabled = true) {
-        StyledToggle(
-            label = "Material",
             description = "This is an example description for the styled toggle.",
             checked = checked.value,
             onCheckedChange = { checked.value = !checked.value }

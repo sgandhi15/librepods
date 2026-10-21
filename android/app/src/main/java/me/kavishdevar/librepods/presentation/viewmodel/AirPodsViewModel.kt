@@ -36,12 +36,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import me.kavishdevar.librepods.BuildConfig
-import me.kavishdevar.librepods.billing.BillingManager
 import me.kavishdevar.librepods.bluetooth.AACPManager
 import me.kavishdevar.librepods.bluetooth.AACPManager.Companion.ControlCommandIdentifiers
-import me.kavishdevar.librepods.bluetooth.ATTCCCDHandles
-import me.kavishdevar.librepods.bluetooth.ATTHandles
 import me.kavishdevar.librepods.bluetooth.BluetoothConnectionManager
 import me.kavishdevar.librepods.data.AirPodsInstance
 import me.kavishdevar.librepods.data.AirPodsModels
@@ -53,7 +49,6 @@ import me.kavishdevar.librepods.data.Capability
 import me.kavishdevar.librepods.data.ControlCommandRepository
 import me.kavishdevar.librepods.data.CustomEq
 import me.kavishdevar.librepods.data.StemAction
-import me.kavishdevar.librepods.data.XposedRemotePrefProvider
 import me.kavishdevar.librepods.services.AirPodsService
 
 @Suppress("ArrayInDataClass")
@@ -89,17 +84,9 @@ data class AirPodsUiState(
     val leftAction: StemAction = StemAction.CYCLE_NOISE_CONTROL_MODES,
     val rightAction: StemAction = StemAction.CYCLE_NOISE_CONTROL_MODES,
 
-    val loudSoundReductionEnabled: Boolean = false,
-    val transparencyData: ByteArray = byteArrayOf(),
-    val hearingAidData: ByteArray = byteArrayOf(),
-
-    val isPremium: Boolean = false,
-    val vendorIdHook: Boolean = false,
-
     val dynamicEndOfCharge: Boolean = false,
 
     val connectionSuccessful: Boolean = false,
-    val timeUntilFOSSPremiumExpiry: Long = 0L,
 
     val customEq: CustomEq = CustomEq(1, 50, 50, 50) // disabled
 )
@@ -153,11 +140,6 @@ val demoState = AirPodsUiState(
     leftAction = StemAction.CYCLE_NOISE_CONTROL_MODES,
     rightAction = StemAction.DIGITAL_ASSISTANT,
 
-    loudSoundReductionEnabled = true,
-
-    isPremium = true,
-    vendorIdHook = true,
-
     dynamicEndOfCharge = true,
 
     customEq = CustomEq(state = 2, low = 65, mid = 50, high = 70),
@@ -210,10 +192,7 @@ class AirPodsViewModel(
         observeAACP()
         loadCurrentStatus()
         loadEq()
-        loadATT()
-        observeATT()
         observeSharedPreferences()
-        observeBilling()
         if (isDemoMode) activateDemoMode()
         isReady = true
     }
@@ -227,23 +206,8 @@ class AirPodsViewModel(
     private val listeners =
         mutableMapOf<ControlCommandIdentifiers, AACPManager.ControlCommandListener>()
 
-    private val xposedRemotePref = XposedRemotePrefProvider.create()
-
     private lateinit var broadcastReceiver: BroadcastReceiver
 
-//    private val _cameraAction = MutableStateFlow(
-//        sharedPreferences.getString("camera_action", null)
-//            ?.let { value -> AACPManager.Companion.StemPressType.entries.find { it.name == value } })
-//
-//    val cameraAction: StateFlow<AACPManager.Companion.StemPressType?> = _cameraAction
-//
-//    fun setCameraAction(action: AACPManager.Companion.StemPressType?) {
-//        sharedPreferences.edit {
-//            if (action == null) remove("camera_action")
-//            else putString("camera_action", action.name)
-//        }
-//        _cameraAction.value = action
-//    }
 
     fun setCustomEq(low: Int, mid: Int, high: Int) {
         require(low in 0..100)
@@ -280,37 +244,13 @@ class AirPodsViewModel(
         _uiState.update { it.copy(deviceName = name) }
     }
 
-    private fun observeBilling() {
-        if (isDemoMode) return
-        viewModelScope.launch {
-            BillingManager.provider.isPremium.collect { premium ->
-                if (premium) {
-                    sharedPreferences.edit {
-                        remove("premium_expiry_time")
-                        if (BuildConfig.PLAY_BUILD) remove("foss_upgraded")
-                    }
-                    _uiState.update { it.copy(isPremium = true, timeUntilFOSSPremiumExpiry = 0L) }
-                } else {
-                    if (_uiState.value.timeUntilFOSSPremiumExpiry <= 0L) {
-                        setControlCommandBoolean(
-                            ControlCommandIdentifiers.CONVERSATION_DETECT_CONFIG,
-                            false
-                        )
-                        setHeadGesturesEnabled(false)
-                        _uiState.update { it.copy(isPremium = false) }
-                    }
-                }
-            }
-        }
-    }
-
     private fun observeSharedPreferences() {
         val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             when (key) {
                 "name" -> loadName()
                 "off_listening_mode", "automatic_ear_detection", "automatic_connection_ctrl_cmd",
                 "head_gestures", "left_long_press_action", "right_long_press_action",
-                "dynamic_end_of_charge", "foss_upgraded", "premium_expiry_time" -> loadSharedPreferences()
+                "dynamic_end_of_charge" -> loadSharedPreferences()
             }
         }
         sharedPreferences.registerOnSharedPreferenceChangeListener(listener)
@@ -491,7 +431,6 @@ class AirPodsViewModel(
                 "CYCLE_NOISE_CONTROL_MODES"
             ) ?: "CYCLE_NOISE_CONTROL_MODES"
         )
-        val vendorIdHook = xposedRemotePref.getBoolean("vendor_id_hook", false)
         val dynamicEndOfCharge = sharedPreferences.getBoolean("dynamic_end_of_charge", false)
 
         val connectionSuccessful = sharedPreferences.getBoolean("connection_successful", false)
@@ -504,59 +443,9 @@ class AirPodsViewModel(
                 headGesturesEnabled = headGesturesEnabled,
                 leftAction = leftAction,
                 rightAction = rightAction,
-                vendorIdHook = vendorIdHook,
                 dynamicEndOfCharge = dynamicEndOfCharge,
                 connectionSuccessful = connectionSuccessful,
             )
-        }
-
-        // faulty update on Play caused PLAY_BUILD to be false and resulted in use of FOSS billing in Play. since FOSS is not verified, we need to give 2 weeks to verify the purchase
-        if (BuildConfig.PLAY_BUILD) {
-            val fossUpgraded = sharedPreferences.getBoolean("foss_upgraded", false)
-            val expiryTime = sharedPreferences.getLong("premium_expiry_time", 0L)
-            val now = System.currentTimeMillis()
-
-            when {
-                // existing temporary premium
-                expiryTime > 0L -> {
-                    if (expiryTime <= now) {
-                        sharedPreferences.edit {
-                            remove("premium_expiry_time")
-                            remove("foss_upgraded")
-                        }
-
-                        _uiState.update {
-                            it.copy(
-                                timeUntilFOSSPremiumExpiry = 0L,
-                                isPremium = false
-                            )
-                        }
-                    } else {
-                        _uiState.update {
-                            it.copy(
-                                timeUntilFOSSPremiumExpiry = expiryTime - now,
-                                isPremium = true
-                            )
-                        }
-                    }
-                }
-
-                // First migration from accidental FOSS Play build
-                fossUpgraded && !_uiState.value.isPremium -> {
-                    val newExpiry = now + 28L * 24 * 60 * 60 * 1000
-
-                    sharedPreferences.edit {
-                        putLong("premium_expiry_time", newExpiry)
-                    }
-
-                    _uiState.update {
-                        it.copy(
-                            timeUntilFOSSPremiumExpiry = newExpiry - now,
-                            isPremium = true
-                        )
-                    }
-                }
-            }
         }
     }
 
@@ -638,73 +527,6 @@ class AirPodsViewModel(
     fun stopHeadTracking() {
         service.stopHeadTracking()
         _uiState.update { it.copy(headTrackingActive = false) }
-    }
-
-    fun setATTCharacteristicValue(handle: ATTHandles, value: ByteArray) {
-        when (handle) {
-            // ideally should be using a different viewmodel for ATT based things because there are a lot of values, and I am not going to add all to this state, but there's loudsoundreduction.
-            ATTHandles.LOUD_SOUND_REDUCTION -> {
-                _uiState.value = _uiState.value.copy(loudSoundReductionEnabled = value[0].toInt() == 0x01)
-            }
-            ATTHandles.HEARING_AID -> {
-                _uiState.value = _uiState.value.copy(hearingAidData = value)
-            }
-            ATTHandles.TRANSPARENCY -> {
-                _uiState.value = _uiState.value.copy(transparencyData = value)
-            }
-        }
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                service.attManager.writeCharacteristic(handle, value)
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
-    }
-
-    fun loadATT() {
-        val loudSoundReduction = service.attManager.getCharacteristic(ATTHandles.LOUD_SOUND_REDUCTION) ?: byteArrayOf()
-        val loudSoundReductionEnabled = if (loudSoundReduction.isNotEmpty()) {
-            loudSoundReduction[0].toInt() == 1
-        } else false
-        val hearingAidData = service.attManager.getCharacteristic(ATTHandles.HEARING_AID) ?: byteArrayOf()
-        val transparencyData = service.attManager.getCharacteristic(ATTHandles.TRANSPARENCY) ?: byteArrayOf()
-        _uiState.update {
-            it.copy(
-                loudSoundReductionEnabled = loudSoundReductionEnabled,
-                transparencyData = transparencyData,
-                hearingAidData = hearingAidData
-            )
-        }
-    }
-
-    fun observeATT() {
-        viewModelScope.launch(Dispatchers.IO) {
-            service.attManager.enableNotification(ATTCCCDHandles.HEARING_AID)
-            service.attManager.enableNotification(ATTCCCDHandles.TRANSPARENCY)
-        }
-        service.attManager.setOnNotificationReceived { handle, value ->
-            when (handle) {
-                ATTHandles.LOUD_SOUND_REDUCTION.value.toByte() -> {
-                    val loudSoundReductionEnabled = if (value.isNotEmpty()) {
-                        value[0].toInt() == 1
-                    } else false
-                    _uiState.update {
-                        it.copy(loudSoundReductionEnabled = loudSoundReductionEnabled)
-                    }
-                }
-                ATTHandles.HEARING_AID.value.toByte() -> {
-                    _uiState.update {
-                        it.copy(hearingAidData = value)
-                    }
-                }
-                ATTHandles.TRANSPARENCY.value.toByte() -> {
-                    _uiState.update {
-                        it.copy(transparencyData = value)
-                    }
-                }
-            }
-        }
     }
 
     fun setAutomaticEarDetectionEnabled(enabled: Boolean) {

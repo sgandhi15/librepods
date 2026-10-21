@@ -37,11 +37,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredWidthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.BasicAlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableState
 import androidx.compose.ui.Alignment
@@ -55,7 +53,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.DialogProperties
 import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.kyant.backdrop.drawBackdrop
@@ -64,8 +61,6 @@ import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
 import me.kavishdevar.librepods.R
-import me.kavishdevar.librepods.presentation.theme.DesignSystem
-import me.kavishdevar.librepods.presentation.theme.LocalDesignSystem
 
 @OptIn(ExperimentalMaterial3Api::class)
 @ExperimentalHazeMaterialsApi
@@ -85,131 +80,84 @@ fun ConfirmationDialog(
         enter = scaleIn(initialScale = 1.05f) + fadeIn(),
         exit = scaleOut(targetScale = 1.05f) + fadeOut()
     ) {
-        when (LocalDesignSystem.current) {
-            DesignSystem.Material -> {
-                BasicAlertDialog(
-                    onDismissRequest = onDismiss,
-                    properties = DialogProperties(
-                        dismissOnBackPress = true,
-                        dismissOnClickOutside = false
-                    )
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            val innerBackdrop = rememberLayerBackdrop()
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.4f))
+                    .clickable(enabled = false, onClick = {}),
+                contentAlignment = Alignment.Center
+            ) {
+                val isDarkTheme = isSystemInDarkTheme()
+                Box(
+                    modifier = Modifier
+                        .requiredWidthIn(min = 200.dp, max = 360.dp)
+                        .clip(RoundedCornerShape(48.dp))
+                        .drawBackdrop(
+                            backdrop = backdrop,
+                            exportedBackdrop = innerBackdrop,
+                            shape = { RoundedCornerShape(48.dp) },
+                            effects = {
+                                vibrancy()
+                                blur(4f.dp.toPx())
+                                lens(12f.dp.toPx(), 48f.dp.toPx(), true)
+                            },
+                            onDrawSurface = {
+                                drawRect(
+                                    if (isDarkTheme) Color(0xFF1F1F1F).copy(alpha = 0.35f) else Color(
+                                        0xFFE0E0E0
+                                    ).copy(alpha = 0.7f)
+                                )
+                            })
                 ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Spacer(modifier = Modifier.height(24.dp))
                         Text(
-                            text = title,
-                            style = MaterialTheme.typography.titleMediumEmphasized
+                            title,
+                            style = MaterialTheme.typography.bodyLarge,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(horizontal = 16.dp)
                         )
+                        Spacer(modifier = Modifier.height(12.dp))
                         Text(
-                            text = message,
-                            style = MaterialTheme.typography.bodyMedium
+                            message,
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(horizontal = 16.dp)
                         )
-                        Row(modifier = Modifier.align(Alignment.End)) {
-                            TextButton(
-                                onClick = onDismiss
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(0.9f),
+                            horizontalArrangement = Arrangement.spacedBy(24.dp)
+                        ) {
+                            StyledButton(
+                                onClick = onDismiss,
+                                backdrop = innerBackdrop,
+                                modifier = Modifier.weight(1f),
                             ) {
                                 Text(
                                     text = dismissText,
-                                    style = MaterialTheme.typography.labelMedium
+                                    style = MaterialTheme.typography.bodyMedium
                                 )
                             }
-                            TextButton(
-                                onClick = onConfirm
+                            StyledButton(
+                                onClick = onConfirm,
+                                backdrop = innerBackdrop,
+                                modifier = Modifier.weight(1f),
+                                surfaceColor = MaterialTheme.colorScheme.primary
                             ) {
                                 Text(
                                     text = confirmText,
-                                    style = MaterialTheme.typography.labelMedium
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-            DesignSystem.Apple -> {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    val innerBackdrop = rememberLayerBackdrop()
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.4f))
-                            .clickable(enabled = false, onClick = {}),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        val isDarkTheme = isSystemInDarkTheme()
-                        Box(
-                            modifier = Modifier
-                                .requiredWidthIn(min = 200.dp, max = 360.dp)
-                                .clip(RoundedCornerShape(48.dp))
-                                .drawBackdrop(
-                                    backdrop = backdrop,
-                                    exportedBackdrop = innerBackdrop,
-                                    shape = { RoundedCornerShape(48.dp) },
-                                    effects = {
-                                        vibrancy()
-                                        blur(4f.dp.toPx())
-                                        lens(12f.dp.toPx(), 48f.dp.toPx(), true)
-                                    },
-                                    onDrawSurface = {
-                                        drawRect(
-                                            if (isDarkTheme) Color(0xFF1F1F1F).copy(alpha = 0.35f) else Color(
-                                                0xFFE0E0E0
-                                            ).copy(alpha = 0.7f)
-                                        )
-                                    })
-                        ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Spacer(modifier = Modifier.height(24.dp))
-                                Text(
-                                    title,
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    textAlign = TextAlign.Center,
-                                    modifier = Modifier.padding(horizontal = 16.dp)
-                                )
-                                Spacer(modifier = Modifier.height(12.dp))
-                                Text(
-                                    message,
                                     style = MaterialTheme.typography.bodyMedium,
-                                    textAlign = TextAlign.Center,
-                                    modifier = Modifier.padding(horizontal = 16.dp)
+                                    color = MaterialTheme.colorScheme.onPrimary
                                 )
-                                Spacer(modifier = Modifier.height(16.dp))
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(0.9f),
-                                    horizontalArrangement = Arrangement.spacedBy(24.dp)
-                                ) {
-                                    StyledButton(
-                                        onClick = onDismiss,
-                                        backdrop = innerBackdrop,
-                                        modifier = Modifier.weight(1f),
-                                        materialButtonStyle = MaterialButtonStyle.Outlined,
-                                    ) {
-                                        Text(
-                                            text = dismissText,
-                                            style = MaterialTheme.typography.bodyMedium
-                                        )
-                                    }
-                                    StyledButton(
-                                        onClick = onConfirm,
-                                        backdrop = innerBackdrop,
-                                        modifier = Modifier.weight(1f),
-                                        materialButtonStyle = MaterialButtonStyle.Filled,
-                                        surfaceColor = MaterialTheme.colorScheme.primary
-                                    ) {
-                                        Text(
-                                            text = confirmText,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = MaterialTheme.colorScheme.onPrimary
-                                        )
-                                    }
-                                }
-                                Spacer(modifier = Modifier.height(24.dp))
                             }
                         }
+                        Spacer(modifier = Modifier.height(24.dp))
                     }
                 }
             }

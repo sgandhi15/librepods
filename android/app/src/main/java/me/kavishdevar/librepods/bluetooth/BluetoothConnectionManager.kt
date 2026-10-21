@@ -26,7 +26,6 @@ import android.util.Log
 
 object BluetoothConnectionManager {
     var aacpSocket: BluetoothSocket? = null
-    var attSocket: BluetoothSocket? = null
 }
 
 fun createBluetoothSocket(

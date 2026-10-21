@@ -41,21 +41,17 @@ import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import me.kavishdevar.librepods.R
 import me.kavishdevar.librepods.bluetooth.AACPManager
-import me.kavishdevar.librepods.bluetooth.ATTHandles
 import me.kavishdevar.librepods.presentation.components.StyledButton
 import me.kavishdevar.librepods.presentation.components.StyledToggle
-import me.kavishdevar.librepods.presentation.theme.DesignSystem
-import me.kavishdevar.librepods.presentation.theme.LocalDesignSystem
 import me.kavishdevar.librepods.presentation.viewmodel.AirPodsViewModel
 
 @Composable
-fun HearingProtectionScreen(viewModel: AirPodsViewModel, navigateToPurchase: () -> Unit) {
+fun HearingProtectionScreen(viewModel: AirPodsViewModel) {
     val backdrop = rememberLayerBackdrop()
     val state by viewModel.uiState.collectAsState()
 
-    val m3eEnabled = LocalDesignSystem.current == DesignSystem.Material
-    val topPadding = if (m3eEnabled) 0.dp else WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 84.dp
-    val bottomPadding = if (m3eEnabled) 0.dp else WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 12.dp
+    val topPadding = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 84.dp
+    val bottomPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 12.dp
 
     Column(
         modifier = Modifier
@@ -65,40 +61,7 @@ fun HearingProtectionScreen(viewModel: AirPodsViewModel, navigateToPurchase: () 
             .padding(horizontal = 16.dp)
     ) {
         Spacer(modifier = Modifier.height(topPadding))
-        if (!state.isPremium) {
-            StyledButton(
-                onClick = navigateToPurchase,
-                backdrop = rememberLayerBackdrop(),
-                modifier = Modifier.fillMaxWidth(),
-                maxScale = 0.05f,
-                surfaceColor = MaterialTheme.colorScheme.primary
-            ) {
-                Text(
-                    stringResource(R.string.unlock_advanced_features),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onPrimary
-                )
-            }
-            Spacer(modifier = Modifier.height(16.dp))
-        }
 
-        if (state.vendorIdHook) {
-            StyledToggle(
-                title = stringResource(R.string.environmental_noise),
-                label = stringResource(R.string.loud_sound_reduction),
-                description = stringResource(R.string.loud_sound_reduction_description),
-                checked = state.loudSoundReductionEnabled,
-                onCheckedChange = {
-                    viewModel.setATTCharacteristicValue(
-                        ATTHandles.LOUD_SOUND_REDUCTION,
-                        byteArrayOf(if (it) 1.toByte() else 0.toByte())
-                    )
-                },
-                enabled = state.isPremium
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-        }
         StyledToggle(
             title = stringResource(R.string.workspace_use),
             label = stringResource(R.string.ppe),
@@ -110,8 +73,7 @@ fun HearingProtectionScreen(viewModel: AirPodsViewModel, navigateToPurchase: () 
                 viewModel.setControlCommandBoolean(
                     AACPManager.Companion.ControlCommandIdentifiers.PPE_TOGGLE_CONFIG, it
                 )
-            },
-            enabled = state.isPremium
+            }
         )
         Spacer(modifier = Modifier.height(bottomPadding))
     }

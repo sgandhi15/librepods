@@ -18,7 +18,6 @@
 
 package me.kavishdevar.librepods.presentation.screens
 
-// import me.kavishdevar.librepods.utils.RadareOffsetFinder
 import android.annotation.SuppressLint
 import android.util.Log
 import androidx.compose.foundation.background
@@ -61,15 +60,12 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
 import me.kavishdevar.librepods.R
 import me.kavishdevar.librepods.bluetooth.AACPManager
-import me.kavishdevar.librepods.bluetooth.ATTHandles
 import me.kavishdevar.librepods.data.Capability
 import me.kavishdevar.librepods.presentation.components.StyledButton
 import me.kavishdevar.librepods.presentation.components.StyledList
 import me.kavishdevar.librepods.presentation.components.StyledListItem
 import me.kavishdevar.librepods.presentation.components.StyledSlider
 import me.kavishdevar.librepods.presentation.components.StyledToggle
-import me.kavishdevar.librepods.presentation.theme.DesignSystem
-import me.kavishdevar.librepods.presentation.theme.LocalDesignSystem
 import me.kavishdevar.librepods.presentation.viewmodel.AirPodsViewModel
 import kotlin.io.encoding.ExperimentalEncodingApi
 import kotlin.time.Duration.Companion.milliseconds
@@ -80,21 +76,11 @@ private var phoneMediaDebounceJob: Job? = null
 @ExperimentalHazeMaterialsApi
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalEncodingApi::class, FlowPreview::class)
 @Composable
-fun AccessibilitySettingsScreen(viewModel: AirPodsViewModel, navigateToPurchase: () -> Unit, navigateToTransparencyCustomization: () -> Unit) {
+fun AccessibilitySettingsScreen(viewModel: AirPodsViewModel) {
     val state by viewModel.uiState.collectAsState()
 
-    val hearingAidEnabled =
-        state.controlStates[AACPManager.Companion.ControlCommandIdentifiers.HEARING_AID]?.getOrNull(
-            1
-        )
-            ?.toInt() == 1 && state.controlStates[AACPManager.Companion.ControlCommandIdentifiers.HEARING_AID]?.getOrNull(
-            0
-        )?.toInt() == 1
-
-
-    val m3eEnabled = LocalDesignSystem.current == DesignSystem.Material
-    val topPadding = if (m3eEnabled) 0.dp else WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 84.dp
-    val bottomPadding = if (m3eEnabled) 0.dp else WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 12.dp
+    val topPadding = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 84.dp
+    val bottomPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 12.dp
 
     Column(
         modifier = Modifier
@@ -106,22 +92,6 @@ fun AccessibilitySettingsScreen(viewModel: AirPodsViewModel, navigateToPurchase:
     ) {
         Spacer(modifier = Modifier.height(topPadding))
 
-        if (!state.isPremium) {
-            StyledButton(
-                onClick = navigateToPurchase,
-                backdrop = rememberLayerBackdrop(),
-                modifier = Modifier.fillMaxWidth(),
-                maxScale = 0.05f,
-                surfaceColor = MaterialTheme.colorScheme.primary
-            ) {
-                Text(
-                    stringResource(R.string.unlock_advanced_features),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onPrimary
-                )
-            }
-            Spacer(modifier = Modifier.height(16.dp))
-        }
 
 //            val phoneMediaEQ = remember { mutableStateOf(FloatArray(8) { 0.5f }) }
 //            val phoneEQEnabled = remember { mutableStateOf(false) }
@@ -252,32 +222,10 @@ fun AccessibilitySettingsScreen(viewModel: AirPodsViewModel, navigateToPurchase:
                 viewModel.setControlCommandBoolean(
                     AACPManager.Companion.ControlCommandIdentifiers.ONE_BUD_ANC_MODE, it
                 )
-            },
-            enabled = state.isPremium
+            }
         )
 
-        if (state.capabilities.contains(Capability.LOUD_SOUND_REDUCTION) && state.vendorIdHook) {
-            StyledToggle(
-                label = stringResource(R.string.loud_sound_reduction),
-                description = stringResource(R.string.loud_sound_reduction_description),
-                checked = state.loudSoundReductionEnabled,
-                onCheckedChange = {
-                    viewModel.setATTCharacteristicValue(
-                        ATTHandles.LOUD_SOUND_REDUCTION,
-                        if (it) byteArrayOf(0x01) else byteArrayOf(0x00)
-                    )
-                },
-                enabled = state.isPremium
-            )
-        }
 
-        if (!hearingAidEnabled && state.vendorIdHook) {
-            StyledListItem(
-                name = stringResource(R.string.customize_transparency_mode),
-                onClick = navigateToTransparencyCustomization,
-                enabled = state.isPremium
-            )
-        }
 
         val toneVolumeValue = remember { mutableFloatStateOf(state.controlStates[AACPManager.Companion.ControlCommandIdentifiers.CHIME_VOLUME]?.getOrNull(0)?.toFloat() ?: 75f) }
 
@@ -305,8 +253,7 @@ fun AccessibilitySettingsScreen(viewModel: AirPodsViewModel, navigateToPurchase:
             snapPoints = listOf(75f),
             startIcon = "\uDBC0\uDEA1",
             endIcon = "\uDBC0\uDEA9",
-            independent = true,
-            enabled = state.isPremium
+            independent = true
         )
 
         if (state.capabilities.contains(Capability.SWIPE_FOR_VOLUME)) {
@@ -322,8 +269,7 @@ fun AccessibilitySettingsScreen(viewModel: AirPodsViewModel, navigateToPurchase:
                     viewModel.setControlCommandBoolean(
                         AACPManager.Companion.ControlCommandIdentifiers.VOLUME_SWIPE_MODE, it
                     )
-                },
-                enabled = state.isPremium
+                }
             )
 
             StyledList(
@@ -347,239 +293,6 @@ fun AccessibilitySettingsScreen(viewModel: AirPodsViewModel, navigateToPurchase:
             }
         }
 
-//            if (!hearingAidEnabled && XposedState.isAvailable) {
-//                Text(
-//                    text = stringResource(R.string.apply_eq_to), style = TextStyle(
-//                        fontSize = 14.sp,
-//                        fontWeight = FontWeight.Bold,
-//                        color = textColor.copy(alpha = 0.6f),
-//                        fontFamily = FontFamily(Font(R.font.sf_pro))
-//                    ), modifier = Modifier.padding(8.dp, bottom = 0.dp)
-//                )
-//                Column(
-//                    modifier = Modifier
-//                        .fillMaxWidth()
-//                        .background(
-//                            if (isDarkTheme) Color(0xFF1C1C1E) else Color(0xFFFFFFFF),
-//                            RoundedCornerShape(28.dp)
-//                        )
-//                        .padding(vertical = 0.dp)
-//                ) {
-//                    val darkModeLocal = isSystemInDarkTheme()
-//
-//                    val phoneShape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
-//                    var phoneBackgroundColor by remember {
-//                        mutableStateOf(
-//                            if (darkModeLocal) Color(
-//                                0xFF1C1C1E
-//                            ) else Color(0xFFFFFFFF)
-//                        )
-//                    }
-//                    val phoneAnimatedBackgroundColor by animateColorAsState(
-//                        targetValue = phoneBackgroundColor,
-//                        animationSpec = tween(durationMillis = 500)
-//                    )
-//
-//                    Row(
-//                        modifier = Modifier
-//                            .height(48.dp)
-//                            .fillMaxWidth()
-//                            .background(phoneAnimatedBackgroundColor, phoneShape)
-//                            .pointerInput(Unit) {
-//                                detectTapGestures(
-//                                    onPress = {
-//                                        phoneBackgroundColor =
-//                                            if (darkModeLocal) Color(0x40888888) else Color(
-//                                                0x40D9D9D9
-//                                            )
-//                                        tryAwaitRelease()
-//                                        phoneBackgroundColor =
-//                                            if (darkModeLocal) Color(0xFF1C1C1E) else Color(
-//                                                0xFFFFFFFF
-//                                            )
-//                                        phoneEQEnabled.value = !phoneEQEnabled.value
-//                                    })
-//                            }
-//                            .padding(horizontal = 16.dp),
-//                        verticalAlignment = Alignment.CenterVertically) {
-//                        Text(
-//                            stringResource(R.string.phone),
-//                            fontSize = 16.sp,
-//                            color = textColor,
-//                            fontFamily = FontFamily(Font(R.font.sf_pro)),
-//                            modifier = Modifier.weight(1f)
-//                        )
-//                        Checkbox(
-//                            checked = phoneEQEnabled.value,
-//                            onCheckedChange = { phoneEQEnabled.value = it },
-//                            colors = CheckboxDefaults.colors().copy(
-//                                checkedCheckmarkColor = Color(0xFF007AFF),
-//                                uncheckedCheckmarkColor = Color.Transparent,
-//                                checkedBoxColor = Color.Transparent,
-//                                uncheckedBoxColor = Color.Transparent,
-//                                checkedBorderColor = Color.Transparent,
-//                                uncheckedBorderColor = Color.Transparent
-//                            ),
-//                            modifier = Modifier
-//                                .height(24.dp)
-//                                .scale(1.5f)
-//                        )
-//                    }
-//
-//                    HorizontalDivider(
-//                        thickness = 1.dp, color = Color(0x40888888)
-//                    )
-//
-//                    val mediaShape = RoundedCornerShape(bottomStart = 28.dp, bottomEnd = 28.dp)
-//                    var mediaBackgroundColor by remember {
-//                        mutableStateOf(
-//                            if (darkModeLocal) Color(
-//                                0xFF1C1C1E
-//                            ) else Color(0xFFFFFFFF)
-//                        )
-//                    }
-//                    val mediaAnimatedBackgroundColor by animateColorAsState(
-//                        targetValue = mediaBackgroundColor,
-//                        animationSpec = tween(durationMillis = 500)
-//                    )
-//
-//                    Row(
-//                        modifier = Modifier
-//                            .height(48.dp)
-//                            .fillMaxWidth()
-//                            .background(mediaAnimatedBackgroundColor, mediaShape)
-//                            .pointerInput(Unit) {
-//                                detectTapGestures(
-//                                    onPress = {
-//                                        mediaBackgroundColor =
-//                                            if (darkModeLocal) Color(0x40888888) else Color(
-//                                                0x40D9D9D9
-//                                            )
-//                                        tryAwaitRelease()
-//                                        mediaBackgroundColor =
-//                                            if (darkModeLocal) Color(0xFF1C1C1E) else Color(
-//                                                0xFFFFFFFF
-//                                            )
-//                                        mediaEQEnabled.value = !mediaEQEnabled.value
-//                                    })
-//                            }
-//                            .padding(horizontal = 16.dp),
-//                        verticalAlignment = Alignment.CenterVertically) {
-//                        Text(
-//                            stringResource(R.string.media),
-//                            fontSize = 16.sp,
-//                            color = textColor,
-//                            fontFamily = FontFamily(Font(R.font.sf_pro)),
-//                            modifier = Modifier.weight(1f)
-//                        )
-//                        Checkbox(
-//                            checked = mediaEQEnabled.value,
-//                            onCheckedChange = { mediaEQEnabled.value = it },
-//                            colors = CheckboxDefaults.colors().copy(
-//                                checkedCheckmarkColor = Color(0xFF007AFF),
-//                                uncheckedCheckmarkColor = Color.Transparent,
-//                                checkedBoxColor = Color.Transparent,
-//                                uncheckedBoxColor = Color.Transparent,
-//                                checkedBorderColor = Color.Transparent,
-//                                uncheckedBorderColor = Color.Transparent
-//                            ),
-//                            modifier = Modifier
-//                                .height(24.dp)
-//                                .scale(1.5f)
-//                        )
-//                    }
-//                }
-//
-////                 EQ Settings. Don't seem to have an effect?
-//                Column(
-//                    modifier = Modifier
-//                        .fillMaxWidth()
-//                        .background(
-//                            if (isDarkTheme) Color(0xFF1C1C1E) else Color(0xFFFFFFFF),
-//                            RoundedCornerShape(28.dp)
-//                        )
-//                        .padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally
-//                ) {
-//                    val trackColor = if (isDarkTheme) Color(0xFFB3B3B3) else Color(0xFF929491)
-//                    val activeTrackColor = if (isDarkTheme) Color(0xFF007AFF) else Color(0xFF3C6DF5)
-//                    val thumbColor = if (isDarkTheme) Color(0xFFFFFFFF) else Color(0xFFFFFFFF)
-//
-//                    for (i in 0 until 8) {
-//                        val eqPhoneValue =
-//                            remember(phoneMediaEQ.value[i]) { mutableFloatStateOf(phoneMediaEQ.value[i]) }
-//                        Row(
-//                            horizontalArrangement = Arrangement.SpaceBetween,
-//                            verticalAlignment = Alignment.CenterVertically,
-//                            modifier = Modifier
-//                                .fillMaxWidth()
-//                                .height(38.dp)
-//                        ) {
-//                            Text(
-//                                text = String.format("%.2f", eqPhoneValue.floatValue),
-//                                fontSize = 12.sp,
-//                                color = textColor,
-//                                modifier = Modifier.padding(bottom = 4.dp)
-//                            )
-//
-//                            Slider(
-//                                value = eqPhoneValue.floatValue,
-//                                onValueChange = { newVal ->
-//                                    eqPhoneValue.floatValue = newVal
-//                                    val newEQ = phoneMediaEQ.value.copyOf()
-//                                    newEQ[i] = eqPhoneValue.floatValue
-//                                    phoneMediaEQ.value = newEQ
-//                                },
-//                                valueRange = 0f..100f,
-//                                modifier = Modifier
-//                                    .fillMaxWidth(0.9f)
-//                                    .height(36.dp),
-//                                colors = SliderDefaults.colors(
-//                                    thumbColor = thumbColor,
-//                                    activeTrackColor = activeTrackColor,
-//                                    inactiveTrackColor = trackColor
-//                                ),
-//                                thumb = {
-//                                    Box(
-//                                        modifier = Modifier
-//                                            .size(24.dp)
-//                                            .shadow(4.dp, CircleShape)
-//                                            .background(thumbColor, CircleShape)
-//                                    )
-//                                },
-//                                track = {
-//                                    Box(
-//                                        modifier = Modifier
-//                                            .fillMaxWidth()
-//                                            .height(12.dp),
-//                                        contentAlignment = Alignment.CenterStart
-//                                    ) {
-//                                        Box(
-//                                            modifier = Modifier
-//                                                .fillMaxWidth()
-//                                                .height(4.dp)
-//                                                .background(trackColor, RoundedCornerShape(4.dp))
-//                                        )
-//                                        Box(
-//                                            modifier = Modifier
-//                                                .fillMaxWidth(eqPhoneValue.floatValue / 100f)
-//                                                .height(4.dp)
-//                                                .background(
-//                                                    activeTrackColor, RoundedCornerShape(4.dp)
-//                                                )
-//                                        )
-//                                    }
-//                                })
-//
-//                            Text(
-//                                text = stringResource(R.string.band_label, i + 1),
-//                                fontSize = 12.sp,
-//                                color = textColor,
-//                                modifier = Modifier.padding(top = 4.dp)
-//                            )
-//                        }
-//                    }
-//                }
-//            }
         Spacer(modifier = Modifier.height(bottomPadding))
     }
 }

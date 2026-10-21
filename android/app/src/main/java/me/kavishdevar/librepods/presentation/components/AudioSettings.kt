@@ -29,7 +29,6 @@ import kotlin.io.encoding.ExperimentalEncodingApi
 fun AudioSettings(
     adaptiveVolumeCapability: Boolean,
     conversationAwarenessCapability: Boolean,
-    loudSoundReductionCapability: Boolean,
     adaptiveAudioCapability: Boolean,
     customEqCapability: Boolean,
 
@@ -39,16 +38,10 @@ fun AudioSettings(
     conversationAwarenessChecked: Boolean,
     onConversationAwarenessCheckedChange: (Boolean) -> Unit,
 
-    loudSoundReductionChecked: Boolean,
-    onLoudSoundReductionCheckedChange: (Boolean) -> Unit,
-
     navigateToAdaptiveStrength: () -> Unit,
-    navigateToEqualizer: () -> Unit,
-
-    vendorIdHook: Boolean,
-    isPremium: Boolean
+    navigateToEqualizer: () -> Unit
 ) {
-    if (adaptiveVolumeCapability || conversationAwarenessCapability || loudSoundReductionCapability || adaptiveAudioCapability) {
+    if (adaptiveVolumeCapability || conversationAwarenessCapability || adaptiveAudioCapability) {
         StyledList(title = stringResource(R.string.audio)) {
             if (adaptiveVolumeCapability) {
                 StyledToggle(
@@ -56,7 +49,6 @@ fun AudioSettings(
                     description = stringResource(R.string.personalized_volume_description),
                     checked = adaptiveVolumeChecked,
                     onCheckedChange = onAdaptiveVolumeCheckedChange,
-                    enabled = isPremium,
                 )
             }
 
@@ -66,17 +58,6 @@ fun AudioSettings(
                     description = stringResource(R.string.conversation_awareness_description),
                     checked = conversationAwarenessChecked,
                     onCheckedChange = onConversationAwarenessCheckedChange,
-                    enabled = isPremium,
-                )
-            }
-
-            if (loudSoundReductionCapability && vendorIdHook) {
-                StyledToggle(
-                    label = stringResource(R.string.loud_sound_reduction),
-                    description = stringResource(R.string.loud_sound_reduction_description),
-                    checked = loudSoundReductionChecked,
-                    onCheckedChange = onLoudSoundReductionCheckedChange,
-                    enabled = isPremium,
                 )
             }
 

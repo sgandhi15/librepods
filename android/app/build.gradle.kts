@@ -6,7 +6,6 @@ val appVersionCode = rootProject.extra["appVersionCode"] as Int
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
-    alias(libs.plugins.aboutLibraries)
 //    alias(libs.plugins.hilt)
     id("kotlin-parcelize")
 }
@@ -143,16 +142,11 @@ dependencies {
     implementation(libs.androidx.dynamicanimation)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.material.icons.core)
-    implementation(libs.billing)
     debugImplementation(libs.androidx.compose.ui.tooling)
     implementation(libs.androidx.compose.foundation.layout)
-    implementation(libs.aboutlibraries)
-    implementation(libs.aboutlibraries.compose.m3)
     implementation(libs.backdrop)
 //    implementation(libs.hilt)
 //    implementation(libs.hilt.compiler)
-    compileOnly(libs.libxposed.api)
-    implementation(libs.libxposed.service)
     implementation(libs.play.review)
     implementation(libs.play.review.ktx)
     implementation(libs.androidx.navigation3.ui)
@@ -161,63 +155,14 @@ dependencies {
     implementation(libs.androidx.navigationevent)
 }
 
-aboutLibraries {
-    export {
-        prettyPrint = true
-        excludeFields = listOf("generated")
-        outputFile = file("src/main/res/raw/aboutlibraries.json")
-    }
-}
-
-val rootModuleDir = rootProject.file("../root-module-manual")
 val releaseDir = rootProject.file("../release")
-
-fun cap(s: String) = s.replaceFirstChar { it.uppercase() }
-
-fun registerRootModuleZipTask(
-    name: String,
-    flavor: String,
-    buildType: String
-) = tasks.register<Zip>(name) {
-
-    val variantTask = "assemble${cap(flavor)}${cap(buildType)}"
-    dependsOn(variantTask)
-
-    val apkPath = "outputs/apk/$flavor/$buildType/app-$flavor-$buildType.apk"
-
-    from(rootModuleDir)
-
-    duplicatesStrategy = DuplicatesStrategy.WARN
-
-    from(layout.buildDirectory.file(apkPath)) {
-        into("system/priv-app/LibrePods")
-        rename { "LibrePods.apk" }
-    }
-
-    delete(layout.buildDirectory.dir("outputs/rootModuleZips"))
-
-    archiveFileName.set("LibrePods-FOSS-v$appVersionName-$appVersionCode-$buildType.zip")
-    destinationDirectory.set(layout.buildDirectory.dir("outputs/rootModuleZips"))
-}
-
-val zipRelease = registerRootModuleZipTask(
-    "zipReleaseModule",
-    "foss",
-    "release"
-)
-
-val zipDebug = registerRootModuleZipTask(
-    "zipDebugModule",
-    "foss",
-    "debug"
-)
 
 val collect = tasks.register<Copy>("collectReleaseArtifacts") {
     description = "Collects release artifacts into a single directory."
 
     dependsOn(
-        zipRelease,
-        zipDebug,
+        "assembleFossRelease",
+        "assembleFossDebug",
         "bundlePlayRelease"
     )
 
@@ -235,9 +180,5 @@ val collect = tasks.register<Copy>("collectReleaseArtifacts") {
 
     from(layout.buildDirectory.dir("outputs/bundle/playRelease")) {
         include("*.aab")
-    }
-
-    from(layout.buildDirectory.dir("outputs/rootModuleZips")) {
-        include("*.zip")
     }
 }

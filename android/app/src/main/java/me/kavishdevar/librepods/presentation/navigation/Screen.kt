@@ -23,43 +23,19 @@ sealed interface Screen: NavKey {
     data object AppSettings: Screen
 
     @Serializable
-    data object Troubleshooting: Screen
-
-    @Serializable
     data object HeadTracking: Screen
 
     @Serializable
     data object Accessibility: Screen
 
     @Serializable
-    data object TransparencyCustomization: Screen
-
-    @Serializable
-    data object HearingAid: Screen
-
-    @Serializable
-    data object HearingAidAdjustments: Screen
-
-    @Serializable
     data object AdaptiveStrength: Screen
-
-//    @Serializable
-//    data object CameraControl: Screen
-
-    @Serializable
-    data object OpenSourceLicenses: Screen
-
-    @Serializable
-    data object UpdateHearingTest: Screen
 
     @Serializable
     data object VersionInfo: Screen
 
     @Serializable
     data object HearingProtection: Screen
-
-    @Serializable
-    data object Purchase: Screen
 
     @Serializable
     data object Equalizer: Screen

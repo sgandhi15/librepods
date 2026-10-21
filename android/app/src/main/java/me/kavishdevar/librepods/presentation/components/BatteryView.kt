@@ -184,7 +184,7 @@ fun BatteryViewPreview() {
     )
 
     val bg = if (isSystemInDarkTheme()) Color.Black else Color(0xFFF2F2F7)
-    LibrePodsTheme(m3eEnabled = false) {
+    LibrePodsTheme {
         Box(
             modifier = Modifier
                 .background(bg)

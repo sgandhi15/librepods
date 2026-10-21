@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <title>LibrePods · screen gallery</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script defer src="source-data.js"></script>
+    <script defer src="screens.js"></script>
+    <script defer src="app.js"></script>
+  </head>
+  <body>
+    <header class="gallery-header">
+      <div class="brand-mark" aria-hidden="true">lp</div>
+      <div>
+        <p class="eyebrow">LibrePods / visual inventory</p>
+        <h1>Every screen, in one place.</h1>
+      </div>
+      <a class="readme-link" href="README.md">How to edit ↗</a>
+    </header>
+    <main>
+      <section class="intro" aria-label="About this gallery">
+        <p>
+          <a href="../emulator-screenshots/"
+            >Open the real Android emulator screenshots ↗</a
+          >
+        </p>
+        <p>
+          Existing layouts, ready to review. Open a screen, try its controls,
+          and write down what you want to change.
+        </p>
+        <p class="muted">
+          HTML reconstructions, not captured app screens. Sample device data.
+          The app's Apple look is approximated; OS dialogs, live Bluetooth,
+          purchases, video and animations are not reproduced.
+          Original repo screenshots are in References. Linux covers the Qt app
+          in this checkout, not the Rust branch.
+        </p>
+      </section>
+      <section class="toolbar" aria-label="Gallery controls">
+        <label class="search-label"
+          ><span>Find a screen</span
+          ><input
+            id="search"
+            type="search"
+            placeholder="Name, setting, source file…"
+            autocomplete="off"
+        /></label>
+        <label
+          ><span>Platform</span
+          ><select id="platform">
+            <option value="all">All platforms</option>
+            <option value="android">Android</option>
+            <option value="linux">Linux Qt</option>
+            <option value="reference">References</option>
+          </select></label
+        >
+        <label
+          ><span>Section</span
+          ><select id="category">
+            <option value="all">All sections</option>
+          </select></label
+        >
+        <label
+          ><span>Preview theme</span
+          ><select id="theme">
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+          </select></label
+        >
+        <label class="check-label"
+          ><input id="expand" type="checkbox" /> Full page height</label
+        >
+        <button id="export-notes" type="button">Export notes</button>
+      </section>
+      <div class="inventory-heading">
+        <p id="count" role="status" aria-live="polite"></p>
+        <button id="reset" type="button">Reset filters</button>
+      </div>
+      <nav id="section-links" aria-label="Jump to section"></nav>
+      <div id="gallery"></div>
+      <p id="empty" hidden>
+        No matching screens. Try another search or reset the filters.
+      </p>
+      <noscript
+        >This gallery needs JavaScript enabled. No server or packages are
+        required.</noscript
+      >
+      <footer>
+        Local design reference only. No controls communicate with a device.
+        Notes stay in this browser; export them to keep a copy.
+      </footer>
+    </main>
+    <dialog id="detail" aria-labelledby="detail-title">
+      <div class="detail-top">
+        <div>
+          <p class="eyebrow" id="detail-meta"></p>
+          <h2 id="detail-title"></h2>
+        </div>
+        <button id="close-detail" type="button" aria-label="Close screen">
+          Close ×
+        </button>
+      </div>
+      <div class="detail-layout">
+        <div id="detail-preview"></div>
+        <aside id="detail-info"></aside>
+      </div>
+    </dialog>
+    <div id="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>

@@ -91,20 +91,13 @@ import me.kavishdevar.librepods.presentation.components.StyledList
 import me.kavishdevar.librepods.presentation.components.StyledListItem
 import me.kavishdevar.librepods.presentation.components.StyledSlider
 import me.kavishdevar.librepods.presentation.components.StyledToggle
-import me.kavishdevar.librepods.presentation.theme.DesignSystem
-import me.kavishdevar.librepods.presentation.theme.LocalDesignSystem
-import me.kavishdevar.librepods.presentation.theme.MaterialTypography
 import me.kavishdevar.librepods.presentation.viewmodel.AppSettingsViewModel
-import me.kavishdevar.librepods.utils.XposedState
 import java.util.concurrent.TimeUnit
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppSettingsScreen(
     viewModel: AppSettingsViewModel = viewModel(),
-    navigateToPurchase: () -> Unit,
-    navigateToTroubleshooting: () -> Unit,
-    navigateToOpenSourceLicenses: () -> Unit,
     navigateToReleaseNotesScreen: () -> Unit
 ) {
     val context = LocalContext.current
@@ -119,9 +112,8 @@ fun AppSettingsScreen(
     val subjectFocusRequester = remember { FocusRequester() }
     val descriptionFocusRequester = remember { FocusRequester() }
 
-    val m3eEnabled = LocalDesignSystem.current == DesignSystem.Material
-    val topPadding = if (m3eEnabled) 16.dp else WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 84.dp
-    val bottomPadding = if (m3eEnabled) 0.dp else WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 12.dp
+    val topPadding = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 84.dp
+    val bottomPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 12.dp
 
     Column(
         modifier = Modifier
@@ -135,63 +127,6 @@ fun AppSettingsScreen(
 
         val isDarkTheme = isSystemInDarkTheme()
 
-        if (!state.isPremium && state.connectionSuccessful) {
-            StyledButton(
-                onClick = navigateToPurchase,
-                backdrop = rememberLayerBackdrop(),
-                modifier = Modifier.fillMaxWidth(),
-                maxScale = 0.05f,
-                surfaceColor = MaterialTheme.colorScheme.primary
-            ) {
-                Text(
-                    stringResource(R.string.unlock_advanced_features),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onPrimary
-                )
-            }
-            Spacer(modifier = Modifier.height(16.dp))
-        }
-        if (state.timeUntilFOSSPremiumExpiry > 0L) {
-            Box(
-                modifier = Modifier
-                    .background(Color(0xFF32829B), RoundedCornerShape(28.dp))
-                    .clip(RoundedCornerShape(28.dp))
-                    .clickable {
-                        val emailIntent = Intent(Intent.ACTION_SENDTO).apply {
-                            data = "mailto:".toUri()
-                            putExtra(Intent.EXTRA_EMAIL, arrayOf("billing@kavish.xyz"))
-                            putExtra(Intent.EXTRA_SUBJECT, "LibrePods Play billing error")
-                            putExtra(
-                                Intent.EXTRA_TEXT,
-                                "Please enter your GitHub username to restore your premium access:\n\nGitHub username: "
-                            )
-                        }
-                        context.startActivity(emailIntent)
-                    }
-            ) {
-                Text(
-                    text = stringResource(
-                        R.string.play_foss_premium_banner, maxOf(1, TimeUnit.MILLISECONDS.toDays(state.timeUntilFOSSPremiumExpiry).toInt())
-                    ),
-                    modifier = Modifier
-                        .padding(16.dp),
-                    style = TextStyle(
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                        fontFamily = FontFamily(Font(R.font.sf_pro))
-                    )
-                )
-            }
-        }
-
-        StyledToggle(
-            title = stringResource(R.string.appearance),
-            label = stringResource(R.string.use_material3e),
-            checked = state.m3eEnabled,
-            onCheckedChange = viewModel::setm3eEnabled,
-            enabled = state.isPremium
-        )
 
         if (state.connectionSuccessful) {
             StyledToggle(
@@ -199,8 +134,7 @@ fun AppSettingsScreen(
                 label = stringResource(R.string.show_phone_battery_in_widget),
                 description = stringResource(R.string.show_phone_battery_in_widget_description),
                 checked = state.showPhoneBatteryInWidget,
-                onCheckedChange = viewModel::setShowPhoneBatteryInWidget,
-                enabled = state.isPremium
+                onCheckedChange = viewModel::setShowPhoneBatteryInWidget
             )
 
             StyledList(title = stringResource(R.string.popup_animations)) {
@@ -209,13 +143,6 @@ fun AppSettingsScreen(
                     description = stringResource(R.string.show_bottom_sheet_popup_description),
                     checked = state.showBottomSheetPopup,
                     onCheckedChange = viewModel::setShowBottomSheetPopup,
-                )
-
-                StyledToggle(
-                    label = stringResource(R.string.show_island_popup),
-                    description = stringResource(R.string.show_island_popup_description),
-                    checked = state.showIslandPopup,
-                    onCheckedChange = viewModel::setShowIslandPopup,
                 )
             }
 
@@ -226,8 +153,7 @@ fun AppSettingsScreen(
                     label = stringResource(R.string.conversation_awareness_pause_music),
                     description = stringResource(R.string.conversation_awareness_pause_music_description),
                     checked = state.conversationAwarenessPauseMusicEnabled,
-                    onCheckedChange = viewModel::setConversationAwarenessPauseMusicEnabled,
-                    enabled = state.isPremium
+                    onCheckedChange = viewModel::setConversationAwarenessPauseMusicEnabled
                 )
 
                 StyledToggle(
@@ -235,7 +161,6 @@ fun AppSettingsScreen(
                     description = stringResource(R.string.relative_conversation_awareness_volume_description),
                     checked = state.relativeConversationAwarenessVolumeEnabled,
                     onCheckedChange = viewModel::setRelativeConversationAwarenessVolumeEnabled,
-                    enabled = state.isPremium,
                 )
             }
 
@@ -258,25 +183,9 @@ fun AppSettingsScreen(
                         newValue
                     )
                 },
-                independent = true,
-                enabled = state.isPremium
+                independent = true
             )
 
-//            if (!BuildConfig.PLAY_BUILD) {
-//                Spacer(modifier = Modifier.height(16.dp))
-//
-//                StyledListItem(
-//                    to = "",
-//                    titleRes = stringResource(R.string.camera_control),
-//                    name = stringResource(R.string.set_custom_camera_package),
-//                    navController = navController,
-//                    onClick = {
-//                        if (state.isPremium) viewModel.setShowCameraDialog(true)
-//                    },
-//                    independent = true,
-//                    descriptionRes = stringResource(R.string.camera_control_app_description)
-//                )
-//            }
 
             Spacer(modifier = Modifier.height(16.dp))
             if (context.checkSelfPermission("android.permission.BLUETOOTH_PRIVILEGED") == PackageManager.PERMISSION_GRANTED) {
@@ -285,8 +194,7 @@ fun AppSettingsScreen(
                     label = stringResource(R.string.disconnect_when_not_wearing),
                     description = stringResource(R.string.disconnect_when_not_wearing_description),
                     checked = state.disconnectWhenNotWearing,
-                    onCheckedChange = viewModel::setDisconnectWhenNotWearing,
-                    enabled = state.isPremium
+                    onCheckedChange = viewModel::setDisconnectWhenNotWearing
                 )
             }
 
@@ -295,30 +203,26 @@ fun AppSettingsScreen(
                     label = stringResource(R.string.takeover_disconnected),
                     description = stringResource(R.string.takeover_disconnected_desc),
                     checked = state.takeoverWhenDisconnected,
-                    onCheckedChange = viewModel::setTakeoverWhenDisconnected,
-                    enabled = state.isPremium
+                    onCheckedChange = viewModel::setTakeoverWhenDisconnected
                 )
                 StyledToggle(
                     label = stringResource(R.string.takeover_idle),
                     description = stringResource(R.string.takeover_idle_desc),
                     checked = state.takeoverWhenIdle,
-                    onCheckedChange = viewModel::setTakeoverWhenIdle,
-                    enabled = state.isPremium
+                    onCheckedChange = viewModel::setTakeoverWhenIdle
                 )
                 StyledToggle(
                     label = stringResource(R.string.takeover_music),
                     description = stringResource(R.string.takeover_music_desc),
                     checked = state.takeoverWhenMusic,
-                    onCheckedChange = viewModel::setTakeoverWhenMusic,
-                    enabled = state.isPremium
+                    onCheckedChange = viewModel::setTakeoverWhenMusic
                 )
 
                 StyledToggle(
                     label = stringResource(R.string.takeover_call),
                     description = stringResource(R.string.takeover_call_desc),
                     checked = state.takeoverWhenCall,
-                    onCheckedChange = viewModel::setTakeoverWhenCall,
-                    enabled = state.isPremium
+                    onCheckedChange = viewModel::setTakeoverWhenCall
                 )
             }
 
@@ -329,15 +233,13 @@ fun AppSettingsScreen(
                     label = stringResource(R.string.takeover_ringing_call),
                     description = stringResource(R.string.takeover_ringing_call_desc),
                     checked = state.takeoverWhenRingingCall,
-                    onCheckedChange = viewModel::setTakeoverWhenRingingCall,
-                    enabled = state.isPremium
+                    onCheckedChange = viewModel::setTakeoverWhenRingingCall
                 )
                 StyledToggle(
                     label = stringResource(R.string.takeover_media_start),
                     description = stringResource(R.string.takeover_media_start_desc),
                     checked = state.takeoverWhenMediaStart,
-                    onCheckedChange = viewModel::setTakeoverWhenMediaStart,
-                    enabled = state.isPremium
+                    onCheckedChange = viewModel::setTakeoverWhenMediaStart
                 )
             }
 
@@ -346,8 +248,7 @@ fun AppSettingsScreen(
                 label = stringResource(R.string.use_alternate_head_tracking_packets),
                 description = stringResource(R.string.use_alternate_head_tracking_packets_description),
                 checked = state.useAlternateHeadTrackingPackets,
-                onCheckedChange = viewModel::setUseAlternateHeadTrackingPackets,
-                enabled = state.isPremium
+                onCheckedChange = viewModel::setUseAlternateHeadTrackingPackets
             )
             Spacer(modifier = Modifier.height(16.dp))
         } else {
@@ -359,39 +260,14 @@ fun AppSettingsScreen(
             ) {
                 Text(
                     text = stringResource(R.string.customizations_unavailable),
-                    style = MaterialTypography.bodyMedium,
+                    style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier
                 )
             }
         }
 
-        if (XposedState.isAvailable && XposedState.bluetoothScopeEnabled) {
-            val restartBluetoothText = stringResource(R.string.found_offset_restart_bluetooth)
-            StyledToggle(
-                label = stringResource(R.string.act_as_an_apple_device) + " (${
-                    stringResource(
-                        R.string.requires_xposed
-                    )
-                })",
-                description = stringResource(R.string.act_as_an_apple_device_description),
-                checked = state.vendorIdHook,
-                onCheckedChange = { enabled ->
-                    Toast.makeText(context, restartBluetoothText, Toast.LENGTH_SHORT).show()
-                    viewModel.setVendorIdHook(enabled)
-                }
-            )
-        }
 
-        if (!BuildConfig.PLAY_BUILD) {
-            Spacer(modifier = Modifier.height(16.dp))
-            StyledList {
-                StyledListItem(
-                    name = stringResource(R.string.troubleshooting),
-                    onClick = navigateToTroubleshooting,
-                )
-            }
-        }
 
         Spacer(modifier = Modifier.height(8.dp))
 
@@ -441,82 +317,8 @@ fun AppSettingsScreen(
         Spacer(modifier = Modifier.height(16.dp))
         AppInfoCard(navigateToReleaseNotesScreen)
 
-        Spacer(modifier = Modifier.height(16.dp))
-
-        StyledListItem(
-            name = stringResource(R.string.open_source_licenses),
-            onClick = navigateToOpenSourceLicenses,
-        )
-
         Spacer(modifier = Modifier.height(bottomPadding))
 
-        if (state.showCameraDialog) {
-            AlertDialog(onDismissRequest = { viewModel.setShowCameraDialog(false) }, title = {
-                Text(
-                    stringResource(R.string.set_custom_camera_package),
-                    fontFamily = FontFamily(Font(R.font.sf_pro)),
-                    fontWeight = FontWeight.Medium
-                )
-            }, text = {
-                Column {
-                    Text(
-                        stringResource(R.string.enter_custom_camera_package),
-                        fontFamily = FontFamily(Font(R.font.sf_pro)),
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
-
-                    OutlinedTextField(
-                        value = state.cameraPackageValue,
-                        onValueChange = {
-                            viewModel.setCameraPackageValue(it)
-                            viewModel.setCameraPackageError(null)
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        isError = state.cameraPackageError != null,
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Ascii,
-                            capitalization = KeyboardCapitalization.None
-                        ),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = if (isDarkTheme) Color(0xFF007AFF) else Color(
-                                0xFF3C6DF5
-                            ),
-                            unfocusedBorderColor = if (isDarkTheme) Color.Gray else Color.LightGray
-                        ),
-                        supportingText = {
-                            if (state.cameraPackageError != null) {
-                                Text(
-                                    state.cameraPackageError ?: "",
-                                    color = MaterialTheme.colorScheme.error
-                                )
-                            }
-                        },
-                        label = { Text(stringResource(R.string.custom_camera_package)) })
-                }
-            }, confirmButton = {
-                val successText = stringResource(R.string.custom_camera_package_set_success)
-                TextButton(
-                    onClick = {
-                        viewModel.saveCameraPackage()
-                        Toast.makeText(context, successText, Toast.LENGTH_SHORT).show()
-                    }) {
-                    Text(
-                        "Save",
-                        fontFamily = FontFamily(Font(R.font.sf_pro)),
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-            }, dismissButton = {
-                TextButton(
-                    onClick = { viewModel.setShowCameraDialog(false) }) {
-                    Text(
-                        "Cancel",
-                        fontFamily = FontFamily(Font(R.font.sf_pro)),
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-            })
-        }
     }
 
     StyledBottomSheet(
@@ -575,7 +377,6 @@ fun AppSettingsScreen(
                                    "\nMODEL: ${Build.MODEL} (${Build.PRODUCT})" +
                                    "\nDISPLAY_VERSION: ${Build.DISPLAY}" +
                                    "\nID: ${Build.ID} (SDK ${Build.VERSION.SDK_INT_FULL})" +
-                                   "\nXposed enabled/active: ${XposedState.isAvailable}/${XposedState.bluetoothScopeEnabled}" +
                                    "\n\nApp details:" +
                                    "\nVERSION: ${BuildConfig.VERSION_NAME}" +
                                    "\nVERSION_CODE: ${BuildConfig.VERSION_CODE}" +
@@ -595,8 +396,7 @@ fun AppSettingsScreen(
            StyledInputField(
                inputState = subjectState,
                focusRequester = subjectFocusRequester,
-               placeholder = stringResource(R.string.subject),
-               forceApple = true
+               placeholder = stringResource(R.string.subject)
            )
 
            Spacer(modifier = Modifier.height(12.dp))
@@ -605,8 +405,7 @@ fun AppSettingsScreen(
                inputState = descriptionState,
                focusRequester = descriptionFocusRequester,
                placeholder = stringResource(R.string.describe_your_issue),
-               singleLine = false,
-               forceApple = true
+               singleLine = false
            )
         }
     }

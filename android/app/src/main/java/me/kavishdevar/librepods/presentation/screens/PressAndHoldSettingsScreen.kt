@@ -55,8 +55,6 @@ import me.kavishdevar.librepods.presentation.components.ListItemOrientation
 import me.kavishdevar.librepods.presentation.components.StyledButton
 import me.kavishdevar.librepods.presentation.components.StyledList
 import me.kavishdevar.librepods.presentation.components.StyledListItem
-import me.kavishdevar.librepods.presentation.theme.DesignSystem
-import me.kavishdevar.librepods.presentation.theme.LocalDesignSystem
 import me.kavishdevar.librepods.presentation.viewmodel.AirPodsViewModel
 import kotlin.experimental.and
 import kotlin.io.encoding.ExperimentalEncodingApi
@@ -64,7 +62,7 @@ import kotlin.io.encoding.ExperimentalEncodingApi
 @ExperimentalHazeMaterialsApi
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LongPress(viewModel: AirPodsViewModel, name: String, navigateToPurchase: () -> Unit) {
+fun LongPress(viewModel: AirPodsViewModel, name: String) {
     val state by viewModel.uiState.collectAsState()
 
     val modesByte = state.controlStates[AACPManager.Companion.ControlCommandIdentifiers.LISTENING_MODE_CONFIGS]?.get(0) ?: 0
@@ -77,9 +75,8 @@ fun LongPress(viewModel: AirPodsViewModel, name: String, navigateToPurchase: () 
 
     val longPressAction = if (name.lowercase() == "left") state.leftAction else state.rightAction
 
-    val m3eEnabled = LocalDesignSystem.current == DesignSystem.Material
-    val topPadding = if (m3eEnabled) 0.dp else WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 84.dp
-    val bottomPadding = if (m3eEnabled) 0.dp else WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 12.dp
+    val topPadding = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 84.dp
+    val bottomPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 12.dp
 
     val scrollState = rememberScrollState()
 
@@ -113,28 +110,10 @@ fun LongPress(viewModel: AirPodsViewModel, name: String, navigateToPurchase: () 
                         name,
                         StemAction.DIGITAL_ASSISTANT
                     )
-                },
-                enabled = state.isPremium
+                }
             )
         }
 
-        if (!state.isPremium) {
-            Spacer(modifier = Modifier.height(24.dp))
-            StyledButton(
-                onClick = navigateToPurchase,
-                backdrop = rememberLayerBackdrop(),
-                modifier = Modifier.fillMaxWidth(),
-                maxScale = 0.05f,
-                surfaceColor = MaterialTheme.colorScheme.primary
-            ) {
-                Text(
-                    stringResource(R.string.unlock_advanced_features),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onPrimary
-                )
-            }
-            Spacer(modifier = Modifier.height(16.dp))
-        }
 
         if (longPressAction == StemAction.CYCLE_NOISE_CONTROL_MODES) {
             Spacer(modifier = Modifier.height(32.dp))

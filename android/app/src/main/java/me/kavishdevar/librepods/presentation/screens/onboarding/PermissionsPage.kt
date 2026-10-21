@@ -2,42 +2,31 @@ package me.kavishdevar.librepods.presentation.screens.onboarding
 
 import android.content.Intent
 import android.provider.Settings
-import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material3.Button
-import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButtonDefaults
-import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.minimumInteractiveComponentSize
-import androidx.compose.material3.toShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -46,15 +35,25 @@ import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberMultiplePermissionsState
 import com.google.accompanist.permissions.rememberPermissionState
+import me.kavishdevar.librepods.R
 import me.kavishdevar.librepods.presentation.MaterialIcons
 import me.kavishdevar.librepods.presentation.components.ListItemOrientation
+import me.kavishdevar.librepods.presentation.components.StyledIntroButton
+import me.kavishdevar.librepods.presentation.components.StyledIntroPage
+import me.kavishdevar.librepods.presentation.components.StyledIntroSubtitle
 import me.kavishdevar.librepods.presentation.components.StyledList
 import me.kavishdevar.librepods.presentation.components.StyledListItem
+import me.kavishdevar.librepods.presentation.theme.sfProFamily
+
+// iOS system colours used for Settings-style icon tiles.
+private val BluetoothBlue = Color(0xFF007AFF)
+private val NotificationRed = Color(0xFFFF3B30)
+private val PhoneGreen = Color(0xFF34C759)
+private val OverlayIndigo = Color(0xFF5856D6)
 
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
 fun PermissionsPage(
-    onBackward: () -> Unit,
     onForward: () -> Unit
 ) {
 
@@ -121,138 +120,83 @@ fun PermissionsPage(
         }
     }
 
-    val scrollState = rememberScrollState()
+    val bluetoothGranted = bluetoothPermissionsState.allPermissionsGranted
+    val notificationsGranted = notificationPermissionState.status.isGranted
+    val phoneGranted = phonePermissionState.allPermissionsGranted
+    val overlayGranted = canDrawOverlays.value
 
-    Box(
-        modifier = Modifier.background(
-            color = MaterialTheme.colorScheme.surfaceContainer,
-            shape = RoundedCornerShape(42.dp)
-        )
+    StyledIntroPage(
+        title = stringResource(R.string.permissions),
+        subtitle = { StyledIntroSubtitle("LibrePods needs Bluetooth to talk to your AirPods. Everything else is optional.") },
+        buttons = {
+            StyledIntroButton(
+                text = stringResource(R.string.grant_all),
+                primary = false,
+                enabled = !bluetoothGranted || !notificationsGranted || !phoneGranted || !overlayGranted,
+                onClick = {
+                    grantingAll = true
+                    if (!bluetoothPermissionsState.allPermissionsGranted) bluetoothPermissionsState.launchMultiplePermissionRequest()
+                    else if (!notificationPermissionState.status.isGranted) notificationPermissionState.launchPermissionRequest()
+                    else if (!phonePermissionState.allPermissionsGranted) phonePermissionState.launchMultiplePermissionRequest()
+                    else if (!canDrawOverlays.value) canDrawOverlays.value =
+                        Settings.canDrawOverlays(context)
+                }
+            )
+            StyledIntroButton(
+                text = stringResource(R.string.continue_label),
+                enabled = bluetoothGranted,
+                onClick = onForward
+            )
+        }
     ) {
-        Column(
-            modifier = Modifier
-                .padding(16.dp)
-                .fillMaxSize()
-                .verticalScroll(scrollState),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            StyledList(title = "Required Permissions") {
-                val animatedBluetoothIconColor by animateColorAsState(if (bluetoothPermissionsState.allPermissionsGranted) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface)
-                val animatedBluetoothContainerColor by animateColorAsState(
-                    if (bluetoothPermissionsState.allPermissionsGranted) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest
-                )
+        StyledList(title = "Required") {
+            StyledListItem(
+                name = "Bluetooth",
+                onClick = if (!bluetoothGranted) {
+                    {
+                        grantingAll = false
+                        bluetoothPermissionsState.launchMultiplePermissionRequest()
+                    }
+                } else null,
+                description = "Required to communicate with AirPods",
+                orientation = ListItemOrientation.Vertical,
+                leadingContent = { PermissionIcon(MaterialIcons.bluetooth, BluetoothBlue) },
+                trailingContent = { PermissionStatus(bluetoothGranted) }
+            )
+        }
 
-                StyledListItem(
-                    name = "Bluetooth",
-                    onClick = if (!bluetoothPermissionsState.allPermissionsGranted) {
-                        {
-                            grantingAll = false
-                            bluetoothPermissionsState.launchMultiplePermissionRequest()
-                        }
-                    } else null,
-                    description = "Required to communicate with AirPods",
-                    orientation = ListItemOrientation.Vertical,
-                    leadingContent = {
-                        Box(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .background(
-                                    animatedBluetoothContainerColor,
-                                    MaterialShapes.SoftBurst.normalized()
-                                        .toShape()
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = MaterialIcons.bluetooth,
-                                contentDescription = "bluetooth",
-                                modifier = Modifier.size(24.dp),
-                                tint = animatedBluetoothIconColor
-                            )
-                        }
-                    },
-                )
-            }
-            StyledList(title = "Optional Permissions") {
-                val animatedNotificationsIconColor by animateColorAsState(
-                    if (notificationPermissionState.status.isGranted) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
-                )
-                val animatedNotificationsContainerColor by animateColorAsState(
-                    if (notificationPermissionState.status.isGranted) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest
-                )
-                val animatedPhoneIconColor by animateColorAsState(if (phonePermissionState.allPermissionsGranted) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface)
-                val animatedPhoneContainerColor by animateColorAsState(
-                    if (phonePermissionState.allPermissionsGranted) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest
-                )
+        Spacer(modifier = Modifier.height(24.dp))
 
-                StyledListItem(
-                    name = "Notifications",
-                    onClick = if (!notificationPermissionState.status.isGranted) {
-                        {
-                            grantingAll = false
-                            notificationPermissionState.launchPermissionRequest()
-                        }
-                    } else null,
-                    description = "Show battery status",
-                    orientation = ListItemOrientation.Vertical,
-                    leadingContent = {
-                        Box(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .background(
-                                    animatedNotificationsContainerColor,
-                                    MaterialShapes.SoftBurst.normalized()
-                                        .toShape()
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = MaterialIcons.notifications,
-                                contentDescription = "notifications",
-                                modifier = Modifier.size(24.dp),
-                                tint = animatedNotificationsIconColor
-                            )
-                        }
-                    },
-                )
-                StyledListItem(
-                    name = "Phone",
-                    onClick = if (!phonePermissionState.allPermissionsGranted) {
-                        {
-                            grantingAll = false
-                            phonePermissionState.launchMultiplePermissionRequest()
-                        }
-                    } else null,
-                    description = "Respond to phone calls with head gestures",
-                    orientation = ListItemOrientation.Vertical,
-                    leadingContent = {
-                        Box(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .background(
-                                    animatedPhoneContainerColor,
-                                    MaterialShapes.SoftBurst.normalized()
-                                        .toShape()
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = MaterialIcons.call,
-                                contentDescription = "bluetooth",
-                                modifier = Modifier.size(24.dp),
-                                tint = animatedPhoneIconColor
-                            )
-                        }
-                    },
-                )
-            }
-
-            val animatedOverlayIconColor by animateColorAsState(if (canDrawOverlays.value) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface)
-            val animatedOverlayContainerColor by animateColorAsState(if (canDrawOverlays.value) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest)
-
+        StyledList(title = "Optional") {
+            StyledListItem(
+                name = "Notifications",
+                onClick = if (!notificationsGranted) {
+                    {
+                        grantingAll = false
+                        notificationPermissionState.launchPermissionRequest()
+                    }
+                } else null,
+                description = "Show battery status",
+                orientation = ListItemOrientation.Vertical,
+                leadingContent = { PermissionIcon(MaterialIcons.notifications, NotificationRed) },
+                trailingContent = { PermissionStatus(notificationsGranted) }
+            )
+            StyledListItem(
+                name = "Phone",
+                onClick = if (!phoneGranted) {
+                    {
+                        grantingAll = false
+                        phonePermissionState.launchMultiplePermissionRequest()
+                    }
+                } else null,
+                description = "Respond to phone calls with head gestures",
+                orientation = ListItemOrientation.Vertical,
+                leadingContent = { PermissionIcon(MaterialIcons.call, PhoneGreen) },
+                trailingContent = { PermissionStatus(phoneGranted) }
+            )
             StyledListItem(
                 name = "Display over other apps",
-                onClick = if (!canDrawOverlays.value) {
+                onClick = if (!overlayGranted) {
                     {
                         grantingAll = false
                         val intent = Intent(
@@ -262,84 +206,54 @@ fun PermissionsPage(
                         context.startActivity(intent)
                     }
                 } else null,
-                description = "Show popups when AirPods are nearby or audio switches to them.",
+                description = "Show a popup when AirPods are nearby.",
                 orientation = ListItemOrientation.Vertical,
-                leadingContent = {
-                    Box(
-                        modifier = Modifier
-                            .size(48.dp)
-                            .background(
-                                animatedOverlayContainerColor,
-                                MaterialShapes.SoftBurst.normalized()
-                                    .toShape()
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = MaterialIcons.stack,
-                            contentDescription = "bluetooth",
-                            modifier = Modifier.size(24.dp),
-                            tint = animatedOverlayIconColor
-                        )
-                    }
-                },
+                leadingContent = { PermissionIcon(MaterialIcons.stack, OverlayIndigo) },
+                trailingContent = { PermissionStatus(overlayGranted) }
             )
+        }
+    }
+}
 
-            Spacer(modifier = Modifier.weight(1f))
+/** Rounded-square coloured tile with a white glyph, like the icons in iOS Settings. */
+@Composable
+private fun PermissionIcon(icon: ImageVector, color: Color) {
+    Box(
+        modifier = Modifier
+            .size(30.dp)
+            .background(color, RoundedCornerShape(7.dp)),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            modifier = Modifier.size(19.dp),
+            tint = Color.White
+        )
+    }
+}
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                FilledIconButton(
-                    onClick = onBackward,
-                    modifier = Modifier
-                        .minimumInteractiveComponentSize()
-                        .size(IconButtonDefaults.mediumContainerSize(IconButtonDefaults.IconButtonWidthOption.Narrow)),
-                    shape = IconButtonDefaults.mediumRoundShape
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Default.ArrowBack,
-                        contentDescription = "backward",
-                        modifier = Modifier.size(IconButtonDefaults.mediumIconSize),
-                    )
-                }
-                Button(
-                    onClick = {
-                        grantingAll = true
-                        if (!bluetoothPermissionsState.allPermissionsGranted) bluetoothPermissionsState.launchMultiplePermissionRequest()
-                        else if (!notificationPermissionState.status.isGranted) notificationPermissionState.launchPermissionRequest()
-                        else if (!phonePermissionState.allPermissionsGranted) phonePermissionState.launchMultiplePermissionRequest()
-                        else if (!canDrawOverlays.value) canDrawOverlays.value =
-                            Settings.canDrawOverlays(context)
-                    },
-                    modifier = Modifier
-                        .height(IconButtonDefaults.mediumContainerSize(IconButtonDefaults.IconButtonWidthOption.Narrow).height)
-                        .weight(1f),
-                    enabled = !bluetoothPermissionsState.allPermissionsGranted || !notificationPermissionState.status.isGranted || !phonePermissionState.allPermissionsGranted || !canDrawOverlays.value
-                ) {
-                    Text(
-                        text = "Grant all",
-                        style = MaterialTheme.typography.labelMedium
-                    )
-                }
-                FilledIconButton(
-                    onClick = onForward,
-                    modifier = Modifier
-                        .minimumInteractiveComponentSize()
-                        .size(
-                            IconButtonDefaults.mediumContainerSize(IconButtonDefaults.IconButtonWidthOption.Narrow)
-                        ),
-                    shape = IconButtonDefaults.mediumRoundShape,
-                    enabled = bluetoothPermissionsState.allPermissionsGranted
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Default.ArrowForward,
-                        contentDescription = "forward",
-                        modifier = Modifier.size(IconButtonDefaults.mediumIconSize),
-                    )
-                }
-            }
+/** "Allow" until the permission is granted, then a checkmark. */
+@Composable
+private fun PermissionStatus(granted: Boolean) {
+    Crossfade(targetState = granted, label = "permissionStatus") { isGranted ->
+        if (isGranted) {
+            Text(
+                text = "􀆅",
+                style = TextStyle(
+                    fontSize = 20.sp,
+                    fontFamily = sfProFamily,
+                    color = MaterialTheme.colorScheme.primary
+                ),
+                modifier = Modifier.padding(start = 8.dp, end = 4.dp)
+            )
+        } else {
+            Text(
+                text = stringResource(R.string.allow),
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(start = 8.dp)
+            )
         }
     }
 }
