@@ -26,6 +26,16 @@ import android.util.Log
 
 object BluetoothConnectionManager {
     var aacpSocket: BluetoothSocket? = null
+    /**
+     * True if a disconnect came from an older socket's reader while a newer connection is
+     * already up, so it shouldn't tear that connection down. [endedSocketId] is the
+     * identityHashCode of the socket that ended, or 0 if unknown.
+     */
+    fun isStaleDisconnect(endedSocketId: Int): Boolean {
+        val current = aacpSocket ?: return false
+        return endedSocketId != 0 && current.isConnected &&
+            System.identityHashCode(current) != endedSocketId
+    }
 }
 
 fun createBluetoothSocket(
