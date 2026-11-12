@@ -232,7 +232,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
         var conversationAwarenessPauseMusic: Boolean = false,
         var showPhoneBatteryInWidget: Boolean = true,
         var relativeConversationAwarenessVolume: Boolean = true,
-        var headGestures: Boolean = true,
+        var headGestures: Boolean = false,
         var disconnectWhenNotWearing: Boolean = false,
         var conversationAwarenessVolume: Int = 43,
         var qsClickBehavior: String = "cycle",
@@ -536,7 +536,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
                 if (!contains("long_press_adaptive")) putBoolean("long_press_adaptive", true)
                 if (!contains("long_press_off")) putBoolean("long_press_off", false)
                 if (!contains("volume_control")) putBoolean("volume_control", true)
-                if (!contains("head_gestures")) putBoolean("head_gestures", true)
+                if (!contains("head_gestures")) putBoolean("head_gestures", false)
                 if (!contains("disconnect_when_not_wearing")) putBoolean(
                     "disconnect_when_not_wearing", false
                 )
@@ -1371,7 +1371,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
             relativeConversationAwarenessVolume = sharedPreferences.getBoolean(
                 "relative_conversation_awareness_volume", true
             ),
-            headGestures = sharedPreferences.getBoolean("head_gestures", true),
+            headGestures = sharedPreferences.getBoolean("head_gestures", false),
             disconnectWhenNotWearing = sharedPreferences.getBoolean(
                 "disconnect_when_not_wearing", false
             ),
@@ -1487,7 +1487,7 @@ class AirPodsService : Service(), SharedPreferences.OnSharedPreferenceChangeList
             "relative_conversation_awareness_volume" -> config.relativeConversationAwarenessVolume =
                 preferences.getBoolean(key, true)
 
-            "head_gestures" -> config.headGestures = preferences.getBoolean(key, true)
+            "head_gestures" -> config.headGestures = preferences.getBoolean(key, false)
             "disconnect_when_not_wearing" -> config.disconnectWhenNotWearing =
                 preferences.getBoolean(key, false)
 

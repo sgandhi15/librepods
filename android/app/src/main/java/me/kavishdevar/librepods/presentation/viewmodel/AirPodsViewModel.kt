@@ -74,7 +74,7 @@ data class AirPodsUiState(
     val version3: String = "",
 
     val headTrackingActive: Boolean = false,
-    val headGesturesEnabled: Boolean = true,
+    val headGesturesEnabled: Boolean = false,
 
     val eqData: FloatArray = floatArrayOf(),
 
@@ -132,7 +132,7 @@ val demoState = AirPodsUiState(
     version3 = demoInstance.version3?: "",
 
     headTrackingActive = true,
-    headGesturesEnabled = true,
+    headGesturesEnabled = false,
 
     automaticEarDetectionEnabled = true,
     automaticConnectionEnabled = true,
@@ -418,7 +418,7 @@ class AirPodsViewModel(
             sharedPreferences.getBoolean("automatic_ear_detection", true)
         val automaticConnectionEnabled =
             sharedPreferences.getBoolean("automatic_connection_ctrl_cmd", true)
-        val headGesturesEnabled = sharedPreferences.getBoolean("head_gestures", true)
+        val headGesturesEnabled = sharedPreferences.getBoolean("head_gestures", false)
         val leftAction = StemAction.valueOf(
             sharedPreferences.getString(
                 "left_long_press_action",
